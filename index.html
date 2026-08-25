@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>The Bench — Teaching Workspace</title>
+<title>Teaching Workspace</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
@@ -223,8 +223,8 @@ button.btn:focus-visible{outline:2px solid var(--blue);outline-offset:1px}
 
 <header class="masthead">
   <div class="masthead-row">
-    <h1 class="wordmark">The&nbsp;<span>Bench</span></h1>
-    <span class="masthead-sub">Teaching workspace · Notre Dame Physics</span>
+    <h1 class="wordmark">Teaching&nbsp;<span>Workspace</span></h1>
+    <span class="masthead-sub">Notre Dame Physics · Advanced Labs</span>
     <div class="masthead-tools">
       <button class="btn" id="settingsBtn" aria-expanded="false">⚙ Tabs</button>
       <button class="btn" id="exportBtn">Export</button>
@@ -1112,7 +1112,7 @@ document.getElementById('exportBtn').onclick = function(){
   var blob = new Blob([JSON.stringify(DB, null, 2)], {type:'application/json'});
   var a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  a.download = 'bench-backup-' + todayISO() + '.json';
+  a.download = 'teaching-workspace-backup-' + todayISO() + '.json';
   a.click();
   URL.revokeObjectURL(a.href);
 };

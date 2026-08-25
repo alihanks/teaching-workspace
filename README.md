@@ -1,15 +1,20 @@
-# The Bench — teaching workspace
+# Teaching Workspace
 
 A private, browser-based dashboard for running teaching labs: courses, TAs, lab
 assistants, outreach, students, a CrossRef journal digest, a to-do list,
-week/semester/year plans, and an attendance page.
+week/semester/year plans, and an attendance page (RollCall).
+
+Two files, no build step, no dependencies. Open `index.html` from disk, or serve
+it from GitHub Pages.
 
 ## Deploy
 
-1. Create a new repo on GitHub (public is fine — see the privacy note below).
-2. Upload `index.html`, `rollcall.html`, and this README.
-3. Settings → Pages → Source: *Deploy from a branch* → Branch: `main`, folder `/ (root)` → Save.
-4. Wait a minute; the site is live at `https://<username>.github.io/<repo>/`.
+GitHub Pages is configured to serve this repo from `main`, folder `/ (root)`.
+Pushing to `main` republishes the site; `.nojekyll` keeps Pages from running the
+files through Jekyll.
+
+To set this up on a fresh repo: Settings → Pages → Source: *Deploy from a branch*
+→ Branch `main`, folder `/ (root)` → Save.
 
 ## Where the data lives
 
