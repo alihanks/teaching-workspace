@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RollCall — The Bench</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --ink:#141A18;--ink2:#4A554F;--ink3:#7C877F;--surface:#E9ECE7;--panel:#FFFFFF;
+  --rule:#C6CEC6;--rule2:#DDE3DC;--green:#1E5C4A;--blue:#2A5C9A;--amber:#B57F0F;--red:#A63A2E;--radius:3px;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--surface);color:var(--ink);font-family:"IBM Plex Sans",system-ui,sans-serif;font-size:15px}
+h1,h2,h3{font-family:"IBM Plex Sans Condensed",sans-serif}
+.mono{font-family:"IBM Plex Mono",monospace}
+.masthead{background:var(--panel);border-bottom:1px solid var(--rule);padding:14px 20px}
+.masthead-row{max-width:1100px;margin:0 auto;display:flex;align-items:baseline;gap:14px;flex-wrap:wrap}
+.wordmark{font-family:"IBM Plex Sans Condensed",sans-serif;font-weight:700;font-size:22px;margin:0}
+.wordmark span{color:var(--green)}
+.masthead-sub{font-family:"IBM Plex Mono",monospace;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3)}
+.back{margin-left:auto}
+.page{max-width:1100px;margin:0 auto;padding:22px 20px 60px}
+.card{background:var(--panel);border:1px solid var(--rule);border-radius:var(--radius)}
+.bar{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:16px}
+.f label{display:block;font-family:"IBM Plex Mono",monospace;font-size:10px;letter-spacing:.13em;text-transform:uppercase;color:var(--ink3);margin-bottom:5px}
+select,input[type=date]{padding:8px 10px;border:1px solid var(--rule);border-radius:var(--radius);background:#FCFDFC;font:inherit;font-size:14px;color:var(--ink)}
+input[type=date]{font-family:"IBM Plex Mono",monospace}
+select:focus,input:focus{outline:2px solid var(--blue);outline-offset:-1px}
+.btn{font-family:"IBM Plex Sans Condensed",sans-serif;font-weight:600;font-size:12px;letter-spacing:.09em;text-transform:uppercase;
+  cursor:pointer;padding:8px 13px;border-radius:var(--radius);border:1px solid var(--rule);background:var(--panel);color:var(--ink2);text-decoration:none;display:inline-block}
+.btn:hover{border-color:var(--ink3);color:var(--ink)}
+.btn:focus-visible{outline:2px solid var(--blue);outline-offset:1px}
+.srow{display:flex;align-items:center;gap:12px;padding:11px 14px;border-bottom:1px solid var(--rule2)}
+.srow:last-child{border-bottom:0}
+.sname{font-weight:600;font-size:14.5px}
+.smeta{font-size:12px;color:var(--ink3)}
+.marks{margin-left:auto;display:flex;gap:0;border:1px solid var(--rule);border-radius:var(--radius);overflow:hidden}
+.marks button{border:0;border-left:1px solid var(--rule);background:var(--panel);cursor:pointer;
+  font-family:"IBM Plex Mono",monospace;font-size:12px;font-weight:600;padding:7px 13px;color:var(--ink3)}
+.marks button:first-child{border-left:0}
+.marks button[aria-pressed="true"].p{background:var(--green);color:#fff}
+.marks button[aria-pressed="true"].l{background:var(--amber);color:#fff}
+.marks button[aria-pressed="true"].a{background:var(--red);color:#fff}
+.panel-head{display:flex;align-items:baseline;gap:12px;margin:26px 0 12px;flex-wrap:wrap}
+.panel-head h2{font-size:18px;margin:0}
+.count{font-family:"IBM Plex Mono",monospace;font-size:11px;color:var(--ink3);letter-spacing:.1em}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{border:1px solid var(--rule2);padding:8px 10px;text-align:left}
+th{background:#F3F6F2;font-family:"IBM Plex Sans Condensed",sans-serif;font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink2)}
+td.num{font-family:"IBM Plex Mono",monospace}
+.bad{color:var(--red);font-weight:600}
+.empty{padding:22px 14px;color:var(--ink3);font-size:13px}
+@media(prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<header class="masthead">
+  <div class="masthead-row">
+    <h1 class="wordmark">Roll<span>Call</span></h1>
+    <span class="masthead-sub">Lab attendance</span>
+    <a class="btn back" href="index.html">← Back to the bench</a>
+  </div>
+</header>
+
+<main class="page">
+  <div class="bar">
+    <div class="f">
+      <label for="courseSel">Course</label>
+      <select id="courseSel"></select>
+    </div>
+    <div class="f">
+      <label for="dateSel">Session date</label>
+      <input type="date" id="dateSel">
+    </div>
+    <button class="btn" id="allPresent">Mark all present</button>
+    <button class="btn" id="clearDay">Clear this date</button>
+  </div>
+  <div class="card" id="roster"></div>
+
+  <div class="panel-head">
+    <h2>Attendance summary</h2>
+    <span class="count" id="sumCount"></span>
+  </div>
+  <div class="card" id="summary" style="overflow-x:auto"></div>
+</main>
+
+<script>
+var KEY = 'bench-v1';
+var mem = null;
+function readRaw(){
+  try{ var s = localStorage.getItem(KEY); return s ? JSON.parse(s) : null; }catch(e){ return mem; }
+}
+function writeRaw(o){ mem = o; try{ localStorage.setItem(KEY, JSON.stringify(o)); }catch(e){} }
+var DB = readRaw() || {};
+DB.courses = DB.courses || [];
+DB.students = DB.students || [];
+DB.attendance = DB.attendance || {};
+function save(){ writeRaw(DB); }
+function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g,function(c){
+  return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+function todayISO(){
+  var d = new Date();
+  return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+}
+
+var courseSel = document.getElementById('courseSel');
+var dateSel = document.getElementById('dateSel');
+dateSel.value = todayISO();
+
+function fillCourses(){
+  courseSel.innerHTML = '';
+  if(!DB.courses.length){
+    var o = document.createElement('option');
+    o.value = ''; o.textContent = 'No courses yet';
+    courseSel.appendChild(o);
+    return;
+  }
+  DB.courses.forEach(function(c){
+    var o = document.createElement('option');
+    o.value = c.id;
+    o.textContent = (c.code || c.title || 'Course') + (c.term ? ' · ' + c.term : '');
+    courseSel.appendChild(o);
+  });
+}
+
+function studentsFor(cid){
+  return DB.students.filter(function(s){ return s.course === cid; });
+}
+
+function renderRoster(){
+  var box = document.getElementById('roster');
+  box.innerHTML = '';
+  var cid = courseSel.value, date = dateSel.value;
+  if(!cid){
+    box.innerHTML = '<div class="empty">Add a course on the Courses tab first, then assign students to it.</div>';
+    return;
+  }
+  var roster = studentsFor(cid);
+  if(!roster.length){
+    box.innerHTML = '<div class="empty">No students are assigned to this course yet. ' +
+      'Add them on the Students tab and set their Course field.</div>';
+    return;
+  }
+  DB.attendance[cid] = DB.attendance[cid] || {};
+  DB.attendance[cid][date] = DB.attendance[cid][date] || {};
+  var day = DB.attendance[cid][date];
+
+  roster.forEach(function(s){
+    var row = document.createElement('div');
+    row.className = 'srow';
+    row.innerHTML = '<div><div class="sname">' + esc(s.name || 'Unnamed student') + '</div>' +
+      '<div class="smeta">' + esc([s.lab, s.partner ? 'partner: ' + s.partner : ''].filter(Boolean).join(' · ')) + '</div></div>';
+    var marks = document.createElement('div');
+    marks.className = 'marks';
+    [['P','p','Present'],['L','l','Late'],['A','a','Absent']].forEach(function(m){
+      var b = document.createElement('button');
+      b.type = 'button'; b.className = m[1]; b.textContent = m[0]; b.title = m[2];
+      b.setAttribute('aria-label', m[2] + ': ' + (s.name || 'student'));
+      b.setAttribute('aria-pressed', day[s.id] === m[0] ? 'true' : 'false');
+      b.onclick = function(){
+        day[s.id] = (day[s.id] === m[0]) ? undefined : m[0];
+        if(day[s.id] === undefined) delete day[s.id];
+        save(); renderRoster(); renderSummary();
+      };
+      marks.appendChild(b);
+    });
+    row.appendChild(marks);
+    box.appendChild(row);
+  });
+}
+
+function renderSummary(){
+  var box = document.getElementById('summary');
+  var cid = courseSel.value;
+  box.innerHTML = '';
+  if(!cid){ box.innerHTML = '<div class="empty">Nothing to summarize yet.</div>'; return; }
+  var byDate = DB.attendance[cid] || {};
+  var dates = Object.keys(byDate).filter(function(d){ return Object.keys(byDate[d]).length; }).sort();
+  document.getElementById('sumCount').textContent = dates.length + ' session' + (dates.length===1?'':'s') + ' recorded';
+  var roster = studentsFor(cid);
+  if(!dates.length || !roster.length){
+    box.innerHTML = '<div class="empty">Mark a session above and the running totals appear here.</div>';
+    return;
+  }
+  var tbl = document.createElement('table');
+  var head = '<tr><th>Student</th>';
+  dates.forEach(function(d){ head += '<th class="mono">' + esc(d.slice(5)) + '</th>'; });
+  head += '<th>Present</th></tr>';
+  tbl.innerHTML = '<thead>' + head + '</thead>';
+  var tb = document.createElement('tbody');
+  roster.forEach(function(s){
+    var tr = document.createElement('tr');
+    var cells = '<td>' + esc(s.name || 'Unnamed') + '</td>';
+    var present = 0;
+    dates.forEach(function(d){
+      var v = byDate[d][s.id] || '·';
+      if(v === 'P' || v === 'L') present++;
+      cells += '<td class="num' + (v === 'A' ? ' bad' : '') + '">' + v + '</td>';
+    });
+    var pct = Math.round(present / dates.length * 100);
+    cells += '<td class="num' + (pct < 75 ? ' bad' : '') + '">' + pct + '%</td>';
+    tr.innerHTML = cells;
+    tb.appendChild(tr);
+  });
+  tbl.appendChild(tb);
+  box.appendChild(tbl);
+}
+
+document.getElementById('allPresent').onclick = function(){
+  var cid = courseSel.value, date = dateSel.value;
+  if(!cid) return;
+  DB.attendance[cid] = DB.attendance[cid] || {};
+  DB.attendance[cid][date] = DB.attendance[cid][date] || {};
+  studentsFor(cid).forEach(function(s){ DB.attendance[cid][date][s.id] = 'P'; });
+  save(); renderRoster(); renderSummary();
+};
+document.getElementById('clearDay').onclick = function(){
+  var cid = courseSel.value, date = dateSel.value;
+  if(!cid || !DB.attendance[cid]) return;
+  if(!confirm('Clear all marks for ' + date + '?')) return;
+  delete DB.attendance[cid][date];
+  save(); renderRoster(); renderSummary();
+};
+courseSel.onchange = function(){ renderRoster(); renderSummary(); };
+dateSel.onchange = function(){ renderRoster(); };
+
+fillCourses();
+renderRoster();
+renderSummary();
+</script>
+</body>
+</html>
