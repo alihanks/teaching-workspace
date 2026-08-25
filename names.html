@@ -1,0 +1,470 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Name game — Teaching Workspace</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --ink:#141A18;--ink2:#4A554F;--ink3:#7C877F;--surface:#E9ECE7;--panel:#FFFFFF;
+  --rule:#C6CEC6;--rule2:#DDE3DC;--green:#1E5C4A;--blue:#2A5C9A;--amber:#B57F0F;--red:#A63A2E;--radius:3px;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--surface);color:var(--ink);font-family:"IBM Plex Sans",system-ui,sans-serif;font-size:15px}
+h1,h2,h3{font-family:"IBM Plex Sans Condensed",sans-serif}
+.mono{font-family:"IBM Plex Mono",monospace}
+.masthead{background:var(--panel);border-bottom:1px solid var(--rule);padding:14px 20px}
+.masthead-row{max-width:1100px;margin:0 auto;display:flex;align-items:baseline;gap:14px;flex-wrap:wrap}
+.wordmark{font-family:"IBM Plex Sans Condensed",sans-serif;font-weight:700;font-size:22px;margin:0}
+.wordmark span{color:var(--green)}
+.masthead-sub{font-family:"IBM Plex Mono",monospace;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3)}
+.back{margin-left:auto}
+.page{max-width:1100px;margin:0 auto;padding:22px 20px 60px}
+.card{background:var(--panel);border:1px solid var(--rule);border-radius:var(--radius)}
+.bar{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:16px}
+.f label{display:block;font-family:"IBM Plex Mono",monospace;font-size:10px;letter-spacing:.13em;text-transform:uppercase;color:var(--ink3);margin-bottom:5px}
+select{padding:8px 10px;border:1px solid var(--rule);border-radius:var(--radius);background:#FCFDFC;font:inherit;font-size:14px;color:var(--ink)}
+select:focus{outline:2px solid var(--blue);outline-offset:-1px}
+.btn{font-family:"IBM Plex Sans Condensed",sans-serif;font-weight:600;font-size:12px;letter-spacing:.09em;text-transform:uppercase;
+  cursor:pointer;padding:8px 13px;border-radius:var(--radius);border:1px solid var(--rule);background:var(--panel);color:var(--ink2);text-decoration:none;display:inline-block}
+.btn:hover{border-color:var(--ink3);color:var(--ink)}
+.btn:focus-visible{outline:2px solid var(--blue);outline-offset:1px}
+.btn.primary{background:var(--green);border-color:var(--green);color:#fff}
+.btn.primary:hover{color:#fff;border-color:var(--green)}
+
+/* scoreboard */
+.score{display:flex;gap:0;border:1px solid var(--rule);border-radius:var(--radius);overflow:hidden;background:var(--panel);margin-bottom:16px}
+.score div{flex:1;padding:10px 14px;border-left:1px solid var(--rule2);text-align:center}
+.score div:first-child{border-left:0}
+.score .k{font-family:"IBM Plex Mono",monospace;font-size:10px;letter-spacing:.13em;text-transform:uppercase;color:var(--ink3)}
+.score .v{font-family:"IBM Plex Sans Condensed",sans-serif;font-weight:700;font-size:20px;margin-top:2px}
+
+/* quiz */
+.quiz{padding:24px 20px;display:flex;flex-direction:column;align-items:center;gap:18px}
+.qphoto{width:220px;height:220px;object-fit:cover;border:1px solid var(--rule);border-radius:var(--radius);background:var(--surface)}
+.qask{font-family:"IBM Plex Mono",monospace;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3)}
+.choices{display:grid;grid-template-columns:1fr 1fr;gap:10px;width:100%;max-width:560px}
+@media(max-width:560px){.choices{grid-template-columns:1fr}.qphoto{width:180px;height:180px}}
+.choice{display:flex;align-items:center;gap:10px;text-align:left;width:100%;
+  font:inherit;font-size:15px;color:var(--ink);cursor:pointer;
+  padding:12px 14px;border:1px solid var(--rule);border-radius:var(--radius);background:#FCFDFC}
+.choice:hover:not(:disabled){border-color:var(--ink3)}
+.choice:focus-visible{outline:2px solid var(--blue);outline-offset:1px}
+.choice:disabled{cursor:default}
+.choice .num{font-family:"IBM Plex Mono",monospace;font-size:11px;color:var(--ink3);
+  border:1px solid var(--rule);border-radius:2px;padding:1px 5px;flex:none}
+.choice.right{background:var(--green);border-color:var(--green);color:#fff}
+.choice.right .num{color:#fff;border-color:rgba(255,255,255,.5)}
+.choice.wrong{background:var(--red);border-color:var(--red);color:#fff}
+.choice.wrong .num{color:#fff;border-color:rgba(255,255,255,.5)}
+.verdict{min-height:22px;font-family:"IBM Plex Sans Condensed",sans-serif;font-weight:600;font-size:16px}
+.verdict.ok{color:var(--green)}
+.verdict.no{color:var(--red)}
+.hint{font-family:"IBM Plex Mono",monospace;font-size:11px;color:var(--ink3);letter-spacing:.06em}
+
+/* round summary */
+.missed{display:flex;flex-wrap:wrap;gap:14px;justify-content:center;max-width:640px}
+.missed figure{margin:0;width:88px;text-align:center}
+.missed img{width:88px;height:88px;object-fit:cover;border:1px solid var(--rule);border-radius:var(--radius)}
+.missed figcaption{font-size:12.5px;margin-top:5px;line-height:1.35}
+
+.panel-head{display:flex;align-items:baseline;gap:12px;margin:26px 0 12px;flex-wrap:wrap}
+.panel-head h2{font-size:18px;margin:0}
+.count{font-family:"IBM Plex Mono",monospace;font-size:11px;color:var(--ink3);letter-spacing:.1em}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{border:1px solid var(--rule2);padding:8px 10px;text-align:left}
+th{background:#F3F6F2;font-family:"IBM Plex Sans Condensed",sans-serif;font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink2)}
+td.num{font-family:"IBM Plex Mono",monospace}
+.bad{color:var(--red);font-weight:600}
+.empty{padding:22px 14px;color:var(--ink3);font-size:13px;line-height:1.6}
+@media(prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<header class="masthead">
+  <div class="masthead-row">
+    <h1 class="wordmark">Name<span>Game</span></h1>
+    <span class="masthead-sub">Learn your roster</span>
+    <a class="btn back" href="index.html">← Back to the workspace</a>
+  </div>
+</header>
+
+<main class="page">
+  <div class="bar">
+    <div class="f">
+      <label for="courseSel">Course</label>
+      <select id="courseSel"></select>
+    </div>
+    <button class="btn" id="newRound">New round</button>
+    <button class="btn" id="resetStats">Reset all-time stats</button>
+  </div>
+
+  <div class="score" id="score" hidden>
+    <div><div class="k">Round</div><div class="v" id="sProgress">–</div></div>
+    <div><div class="k">Correct</div><div class="v" id="sCorrect">–</div></div>
+    <div><div class="k">Streak</div><div class="v" id="sStreak">–</div></div>
+  </div>
+
+  <div class="card" id="stage"></div>
+
+  <div class="panel-head">
+    <h2>Trouble spots</h2>
+    <span class="count" id="statCount"></span>
+  </div>
+  <div class="card" id="stats" style="overflow-x:auto"></div>
+</main>
+
+<script>
+/* ============================ storage ============================ */
+var KEY = 'bench-v1';
+var mem = null;
+function readRaw(){
+  try{ var s = localStorage.getItem(KEY); return s ? JSON.parse(s) : null; }catch(e){ return mem; }
+}
+function writeRaw(o){ mem = o; try{ localStorage.setItem(KEY, JSON.stringify(o)); }catch(e){} }
+var DB = readRaw() || {};
+DB.courses  = DB.courses  || [];
+DB.students = DB.students || [];
+DB.namegame = DB.namegame || {};
+function save(){ writeRaw(DB); }
+function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g,function(c){
+  return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+
+/* ============================ round state ============================ */
+var queue = [];      /* student ids still to ask this round */
+var roundLen = 0;
+var correct = 0;
+var streak = 0;
+var best = 0;
+var missed = [];     /* student ids missed this round */
+var currentQ = null; /* {id, choices:[ids]} */
+var locked = false;  /* true between answering and advancing */
+
+var courseSel = document.getElementById('courseSel');
+var stage = document.getElementById('stage');
+
+function studentsFor(cid){
+  return DB.students.filter(function(s){ return s.course === cid; });
+}
+function withPhotos(list){
+  return list.filter(function(s){ return !!s.photo; });
+}
+function byId(id){
+  return DB.students.filter(function(s){ return s.id === id; })[0];
+}
+function nameOf(s){ return (s && s.name) || 'Unnamed student'; }
+
+function shuffle(a){
+  for(var i = a.length - 1; i > 0; i--){
+    var j = Math.floor(Math.random() * (i + 1));
+    var t = a[i]; a[i] = a[j]; a[j] = t;
+  }
+  return a;
+}
+
+function fillCourses(){
+  courseSel.innerHTML = '';
+  if(!DB.courses.length){
+    var o = document.createElement('option');
+    o.value = ''; o.textContent = 'No courses yet';
+    courseSel.appendChild(o);
+    return;
+  }
+  DB.courses.forEach(function(c){
+    var op = document.createElement('option');
+    op.value = c.id;
+    op.textContent = (c.code || c.title || 'Course') + (c.term ? ' · ' + c.term : '');
+    courseSel.appendChild(op);
+  });
+}
+
+/* ============================ scoring ============================ */
+function stat(id){
+  DB.namegame[id] = DB.namegame[id] || {r:0, w:0};
+  return DB.namegame[id];
+}
+function record(id, wasRight){
+  var st = stat(id);
+  if(wasRight) st.r++; else st.w++;
+  save();
+}
+
+function updateScore(){
+  var box = document.getElementById('score');
+  if(!roundLen){ box.hidden = true; return; }
+  box.hidden = false;
+  var asked = roundLen - queue.length;
+  document.getElementById('sProgress').textContent = Math.min(asked, roundLen) + ' / ' + roundLen;
+  document.getElementById('sCorrect').textContent = correct;
+  document.getElementById('sStreak').textContent = streak + (best > streak ? ' (best ' + best + ')' : '');
+}
+
+/* ============================ round flow ============================ */
+function startRound(ids){
+  var cid = courseSel.value;
+  var pool = ids ? ids.slice() : withPhotos(studentsFor(cid)).map(function(s){ return s.id; });
+  queue = shuffle(pool);
+  roundLen = queue.length;
+  correct = 0; streak = 0; best = 0; missed = []; currentQ = null; locked = false;
+  nextQuestion();
+}
+
+function nextQuestion(){
+  locked = false;
+  if(!queue.length){ currentQ = null; renderRoundEnd(); updateScore(); return; }
+  var id = queue.shift();
+  var cid = courseSel.value;
+  /* Distractors come from the same course, so the wrong answers stay plausible. */
+  var others = studentsFor(cid)
+    .filter(function(s){ return s.id !== id && s.name; })
+    .map(function(s){ return s.id; });
+  var picks = shuffle(others).slice(0, 3);
+  currentQ = { id:id, choices: shuffle(picks.concat([id])) };
+  renderQuestion();
+  updateScore();
+}
+
+function answer(pickedId){
+  if(locked || !currentQ) return;
+  locked = true;
+  var right = pickedId === currentQ.id;
+  if(right){
+    correct++; streak++; if(streak > best) best = streak;
+  } else {
+    streak = 0;
+    if(missed.indexOf(currentQ.id) === -1) missed.push(currentQ.id);
+  }
+  record(currentQ.id, right);
+  renderQuestion(pickedId);
+  updateScore();
+  renderStats();
+}
+
+/* ============================ rendering ============================ */
+function renderStage(){
+  var cid = courseSel.value;
+  var score = document.getElementById('score');
+  if(!cid){
+    stage.innerHTML = '<div class="empty">Add a course on the Courses tab first, then assign students to it.</div>';
+    score.hidden = true;
+    return;
+  }
+  var roster = studentsFor(cid);
+  if(!roster.length){
+    stage.innerHTML = '<div class="empty">No students are assigned to this course yet. ' +
+      'Add them on the Students tab and set their Course field.</div>';
+    score.hidden = true;
+    return;
+  }
+  var photo = withPhotos(roster);
+  if(!photo.length){
+    stage.innerHTML = '<div class="empty">None of the ' + roster.length + ' students in this course have a photo yet. ' +
+      'Open a student on the Students tab and use the Photo field — pictures are cropped square, ' +
+      'shrunk to a thumbnail, and kept on this device only.</div>';
+    score.hidden = true;
+    return;
+  }
+  if(photo.length < 2){
+    stage.innerHTML = '<div class="empty">Only one student in this course has a photo, so there is nothing to tell apart yet. ' +
+      'Add a photo to at least one more student.</div>';
+    score.hidden = true;
+    return;
+  }
+  startRound();
+}
+
+function renderQuestion(pickedId){
+  var s = byId(currentQ.id);
+  if(!s){ nextQuestion(); return; }
+
+  var box = document.createElement('div');
+  box.className = 'quiz';
+
+  var img = document.createElement('img');
+  img.className = 'qphoto';
+  img.src = s.photo;
+  /* Deliberately not the name — the alt text must not give the answer away. */
+  img.alt = 'Photo of the student you are being asked to name';
+  box.appendChild(img);
+
+  var ask = document.createElement('div');
+  ask.className = 'qask';
+  ask.textContent = 'Who is this?';
+  box.appendChild(ask);
+
+  var choices = document.createElement('div');
+  choices.className = 'choices';
+  currentQ.choices.forEach(function(oid, i){
+    var c = byId(oid);
+    var b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'choice';
+    b.innerHTML = '<span class="num">' + (i + 1) + '</span><span>' + esc(nameOf(c)) + '</span>';
+    if(locked){
+      b.disabled = true;
+      if(oid === currentQ.id) b.className += ' right';
+      else if(oid === pickedId) b.className += ' wrong';
+    } else {
+      b.onclick = function(){ answer(oid); };
+    }
+    choices.appendChild(b);
+  });
+  box.appendChild(choices);
+
+  var verdict = document.createElement('div');
+  verdict.className = 'verdict';
+  verdict.setAttribute('role','status');
+  verdict.setAttribute('aria-live','polite');
+  if(locked){
+    var wasRight = pickedId === currentQ.id;
+    verdict.className += wasRight ? ' ok' : ' no';
+    verdict.textContent = wasRight ? 'Correct — ' + nameOf(s) : 'That was ' + nameOf(s);
+  }
+  box.appendChild(verdict);
+
+  if(locked){
+    var next = document.createElement('button');
+    next.type = 'button';
+    next.className = 'btn primary';
+    next.id = 'nextBtn';
+    next.textContent = queue.length ? 'Next' : 'Finish round';
+    next.onclick = nextQuestion;
+    box.appendChild(next);
+  }
+
+  var hint = document.createElement('div');
+  hint.className = 'hint';
+  hint.textContent = locked ? 'Enter or Space for the next one' : 'Press 1–' + currentQ.choices.length + ' to answer';
+  box.appendChild(hint);
+
+  stage.innerHTML = '';
+  stage.appendChild(box);
+  if(locked){ document.getElementById('nextBtn').focus(); }
+}
+
+function renderRoundEnd(){
+  var pct = roundLen ? Math.round(correct / roundLen * 100) : 0;
+  var box = document.createElement('div');
+  box.className = 'quiz';
+
+  var h = document.createElement('h2');
+  h.style.margin = '0';
+  h.textContent = correct + ' of ' + roundLen + ' — ' + pct + '%';
+  box.appendChild(h);
+
+  var sub = document.createElement('div');
+  sub.className = 'qask';
+  sub.textContent = missed.length ? missed.length + ' to work on' : 'Clean round';
+  box.appendChild(sub);
+
+  if(missed.length){
+    var grid = document.createElement('div');
+    grid.className = 'missed';
+    missed.forEach(function(id){
+      var s = byId(id);
+      if(!s) return;
+      var fig = document.createElement('figure');
+      var im = document.createElement('img');
+      im.src = s.photo; im.alt = '';
+      var cap = document.createElement('figcaption');
+      cap.textContent = nameOf(s);
+      fig.appendChild(im); fig.appendChild(cap);
+      grid.appendChild(fig);
+    });
+    box.appendChild(grid);
+  }
+
+  var row = document.createElement('div');
+  row.style.display = 'flex'; row.style.gap = '10px'; row.style.flexWrap = 'wrap';
+  if(missed.length){
+    var again = document.createElement('button');
+    again.type = 'button'; again.className = 'btn primary'; again.id = 'nextBtn';
+    again.textContent = 'Practice these ' + missed.length;
+    var toRedo = missed.slice();
+    again.onclick = function(){ startRound(toRedo); };
+    row.appendChild(again);
+  }
+  var fresh = document.createElement('button');
+  fresh.type = 'button';
+  fresh.className = 'btn' + (missed.length ? '' : ' primary');
+  if(!missed.length) fresh.id = 'nextBtn';
+  fresh.textContent = 'New round';
+  fresh.onclick = function(){ startRound(); };
+  row.appendChild(fresh);
+  box.appendChild(row);
+
+  stage.innerHTML = '';
+  stage.appendChild(box);
+  var f = document.getElementById('nextBtn');
+  if(f) f.focus();
+}
+
+function renderStats(){
+  var box = document.getElementById('stats');
+  var cid = courseSel.value;
+  box.innerHTML = '';
+  var roster = studentsFor(cid).filter(function(s){
+    var st = DB.namegame[s.id];
+    return st && (st.r || st.w);
+  });
+  document.getElementById('statCount').textContent =
+    roster.length ? roster.length + ' with history' : '';
+  if(!roster.length){
+    box.innerHTML = '<div class="empty">Once you have answered a few, the names you keep missing collect here.</div>';
+    return;
+  }
+  roster.sort(function(a, b){
+    var sa = DB.namegame[a.id], sb = DB.namegame[b.id];
+    return (sa.r / (sa.r + sa.w)) - (sb.r / (sb.r + sb.w));
+  });
+  var tbl = document.createElement('table');
+  tbl.innerHTML = '<thead><tr><th>Student</th><th>Right</th><th>Wrong</th><th>Accuracy</th></tr></thead>';
+  var tb = document.createElement('tbody');
+  roster.forEach(function(s){
+    var st = DB.namegame[s.id];
+    var pct = Math.round(st.r / (st.r + st.w) * 100);
+    var tr = document.createElement('tr');
+    tr.innerHTML = '<td>' + esc(nameOf(s)) + '</td>' +
+      '<td class="num">' + st.r + '</td>' +
+      '<td class="num">' + st.w + '</td>' +
+      '<td class="num' + (pct < 70 ? ' bad' : '') + '">' + pct + '%</td>';
+    tb.appendChild(tr);
+  });
+  tbl.appendChild(tb);
+  box.appendChild(tbl);
+}
+
+/* ============================ events ============================ */
+document.addEventListener('keydown', function(e){
+  if(/^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName)) return;
+  if(locked || !currentQ){
+    if(e.key === 'Enter' || e.key === ' '){
+      var n = document.getElementById('nextBtn');
+      if(n){ e.preventDefault(); n.click(); }
+    }
+    return;
+  }
+  var i = parseInt(e.key, 10);
+  if(i >= 1 && i <= currentQ.choices.length){
+    e.preventDefault();
+    answer(currentQ.choices[i - 1]);
+  }
+});
+
+document.getElementById('newRound').onclick = function(){ renderStage(); };
+document.getElementById('resetStats').onclick = function(){
+  DB.namegame = {};
+  save();
+  renderStats();
+};
+courseSel.onchange = function(){ renderStage(); renderStats(); };
+
+fillCourses();
+renderStage();
+renderStats();
+</script>
+</body>
+</html>

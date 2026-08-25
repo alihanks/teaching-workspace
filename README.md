@@ -2,9 +2,9 @@
 
 A private, browser-based dashboard for running teaching labs: courses, TAs, lab
 assistants, outreach, students, a CrossRef journal digest, a to-do list,
-week/semester/year plans, and an attendance page (RollCall).
+week/semester/year plans, and a photo-based name-recall game.
 
-Two files, no build step, no dependencies. Open `index.html` from disk, or serve
+Two pages, no build step, no dependencies. Open `index.html` from disk, or serve
 it from GitHub Pages.
 
 ## Deploy
@@ -29,6 +29,9 @@ Consequences worth knowing:
 - Clearing site data or browsing history for the domain wipes it.
 - Use **Export** regularly to download a JSON backup, and **Import** to restore
   it or move it to another machine.
+- Student photos, once you add them, live in that same local storage and are
+  embedded in the Export file. A backup JSON is therefore a file full of
+  student pictures — treat it accordingly, and keep it off shared drives.
 
 If any of that matters more than convenience, download the two files and open
 `index.html` directly from disk instead of hosting it.
@@ -37,8 +40,11 @@ If any of that matters more than convenience, download the two files and open
 
 - **Courses** drive the rest of the app. Add them first: TAs, students, and the
   semester grid all reference them.
-- **RollCall** reads the students whose *Course* field matches the course you
-  pick, so assign students to a course before taking attendance.
+- **Name game** shows a student photo and four names from the same course, and
+  tracks which faces you keep missing. Add photos on the Students tab: each one
+  is center-cropped and shrunk to a 160px thumbnail before it is stored, so a
+  full roster stays well inside the local-storage budget. Students without a
+  photo are simply skipped.
 - **Digest** queries the CrossRef public API from the browser. Adding a contact
   email in Digest settings puts you in CrossRef's polite pool — faster and more
   reliable service. It is never displayed on the page.

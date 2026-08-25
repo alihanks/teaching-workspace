@@ -118,6 +118,13 @@ input:focus,select:focus,textarea:focus{outline:2px solid var(--blue);outline-of
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:0 14px}
 @media(max-width:560px){.grid2{grid-template-columns:1fr}}
 
+/* photo field */
+.photofield{display:flex;gap:12px;align-items:flex-start;flex-wrap:wrap}
+.photo-preview{width:72px;height:72px;object-fit:cover;border:1px solid var(--rule);border-radius:var(--radius);background:#FCFDFC}
+.photo-ctrls{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.photo-ctrls input[type=file]{font:inherit;font-size:12px;max-width:210px}
+.photo-note{flex-basis:100%;font-size:11.5px;color:var(--ink3);line-height:1.5}
+
 /* checklist field */
 .checks{border:1px solid var(--rule);border-radius:var(--radius);background:#FCFDFC}
 .check{display:flex;gap:9px;align-items:center;padding:7px 10px;border-bottom:1px solid var(--rule2)}
@@ -270,7 +277,7 @@ var DEFAULTS = {
     topics:['gamma spectroscopy','scintillation detector'],
     mailto:'', saved:[], window:14 },
   plans:{ weeks:{}, semesters:[], years:{} },
-  attendance:{},
+  namegame:{},
   hidden:[]
 };
 var DB = Object.assign({}, DEFAULTS, readRaw() || {});
@@ -371,6 +378,7 @@ var ENTITIES = {
     badge:function(r){ return r.flag ? {t:r.flag, c: r.flag==='Struggling'?'hot':(r.flag==='Watch'?'warn':'ok')} : null; },
     fields:[
       {n:'name', l:'Name', t:'text'},
+      {n:'photo', l:'Photo', t:'photo'},
       {n:'email', l:'Email', t:'email', half:true},
       {n:'course', l:'Course', t:'select', opts:courseOpts, half:true},
       {n:'lab', l:'Lab section', t:'text', half:true},
@@ -403,7 +411,7 @@ var TABS = [
   {id:'digest', label:'Digest'},
   {id:'todo', label:'To-do'},
   {id:'plans', label:'Plans'},
-  {id:'rollcall', label:'RollCall'}
+  {id:'names', label:'Name game'}
 ];
 var current = TABS[0].id;
 var selected = {};
@@ -421,7 +429,7 @@ function renderRail(){
     b.setAttribute('aria-selected', t.id === current ? 'true' : 'false');
     b.textContent = t.label;
     b.onclick = function(){
-      if(t.id === 'rollcall'){ window.location.href = 'rollcall.html'; return; }
+      if(t.id === 'names'){ window.location.href = 'names.html'; return; }
       current = t.id; renderRail(); renderMain();
     };
     rail.appendChild(b);
@@ -544,6 +552,10 @@ function fieldEl(rec, f, key){
   lab.setAttribute('for', id); lab.textContent = f.l;
   wrap.appendChild(lab);
 
+  if(f.t === 'photo'){
+    wrap.appendChild(photoField(rec, f, key));
+    return wrap;
+  }
   if(f.t === 'list'){
     wrap.appendChild(listField(rec, f));
     return wrap;
@@ -566,6 +578,88 @@ function fieldEl(rec, f, key){
   el.onchange = function(){ rec[f.n] = el.value; save(); renderListOnly(key); };
   wrap.appendChild(el);
   return wrap;
+}
+
+function photoField(rec, f, key){
+  var box = document.createElement('div');
+  box.className = 'photofield';
+  var img = document.createElement('img');
+  img.className = 'photo-preview'; img.alt = '';
+  var file = document.createElement('input');
+  file.type = 'file'; file.accept = 'image/*';
+  file.id = 'f_' + rec.id + '_' + f.n;
+  var rm = document.createElement('button');
+  rm.type = 'button'; rm.className = 'btn'; rm.textContent = 'Remove';
+  var note = document.createElement('div');
+  note.className = 'photo-note';
+  var failed = false;
+
+  function draw(){
+    if(rec[f.n]){
+      img.src = rec[f.n]; img.style.display = ''; rm.style.display = '';
+    } else {
+      img.removeAttribute('src'); img.style.display = 'none'; rm.style.display = 'none';
+    }
+    if(!failed) note.textContent = rec[f.n] ? '' : 'Used by the Name game. Cropped square and stored on this device only.';
+  }
+
+  file.onchange = function(){
+    var fl = file.files && file.files[0];
+    if(!fl) return;
+    failed = false; note.textContent = 'Processing…';
+    shrinkImage(fl, 160, function(dataUrl, err){
+      file.value = '';
+      if(err){ failed = true; note.textContent = err; return; }
+      var prev = rec[f.n];
+      rec[f.n] = dataUrl;
+      if(!saveGuarded()){
+        rec[f.n] = prev;
+        failed = true;
+        note.textContent = 'Out of browser storage — photo not saved. Remove a few photos and try again.';
+        draw(); return;
+      }
+      failed = false; draw(); renderListOnly(key);
+    });
+  };
+  rm.onclick = function(){ rec[f.n] = ''; failed = false; save(); draw(); renderListOnly(key); };
+
+  var ctrls = document.createElement('div');
+  ctrls.className = 'photo-ctrls';
+  ctrls.appendChild(file); ctrls.appendChild(rm);
+  box.appendChild(img); box.appendChild(ctrls); box.appendChild(note);
+  draw();
+  return box;
+}
+
+/* Center-crops to a square and re-encodes small, so a roster of photos
+   stays well inside the local-storage budget. */
+function shrinkImage(fl, size, cb){
+  if(!/^image\//.test(fl.type)){ cb(null, 'That file is not an image.'); return; }
+  var fr = new FileReader();
+  fr.onerror = function(){ cb(null, 'Could not read that file.'); };
+  fr.onload = function(){
+    var im = new Image();
+    im.onerror = function(){ cb(null, 'Could not decode that image.'); };
+    im.onload = function(){
+      var s = Math.min(im.width, im.height);
+      if(!s){ cb(null, 'That image has no dimensions.'); return; }
+      var c = document.createElement('canvas');
+      c.width = size; c.height = size;
+      var ctx = c.getContext('2d');
+      ctx.drawImage(im, (im.width - s)/2, (im.height - s)/2, s, s, 0, 0, size, size);
+      try{ cb(c.toDataURL('image/jpeg', 0.82), null); }
+      catch(e){ cb(null, 'Could not process that image.'); }
+    };
+    im.src = fr.result;
+  };
+  fr.readAsDataURL(fl);
+}
+
+/* Like save(), but reports a quota failure instead of swallowing it —
+   photos are big enough to actually hit the cap. */
+function saveGuarded(){
+  try{ localStorage.setItem(KEY, JSON.stringify(DB)); mem = DB; return true; }
+  catch(e){ return false; }
 }
 
 function renderListOnly(key){
