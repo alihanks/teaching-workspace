@@ -236,6 +236,34 @@ button.btn:focus-visible{outline:2px solid var(--blue);outline-offset:1px}
 .artmeta{font-family:"IBM Plex Mono",monospace;font-size:11px;color:var(--ink3);display:flex;gap:10px;flex-wrap:wrap}
 .heart{background:none;border:0;cursor:pointer;font-size:15px;color:var(--rule);padding:0 2px}
 .heart.on{color:var(--red)}
+.artcard{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 12px;align-items:start}
+.artcard>h4{grid-column:1;grid-row:1;margin:0}
+.artcard>.artmeta{grid-column:1;grid-row:2}
+.artacts{grid-column:2;grid-row:1 / span 2;align-self:center;display:flex;gap:2px;align-items:center}
+@media(max-width:520px){
+  .artcard{grid-template-columns:minmax(0,1fr)}
+  .artacts{grid-column:1;grid-row:3;justify-content:flex-start;margin-top:4px}
+}
+.mbtn{background:none;border:1px solid transparent;border-radius:var(--radius);cursor:pointer;
+  font-size:14px;line-height:1;color:var(--rule);padding:4px 7px}
+.mbtn:hover{border-color:var(--rule);color:var(--ink3)}
+.mbtn:focus-visible{outline:2px solid var(--blue);outline-offset:1px}
+.mbtn.read.on{background:var(--green);border-color:var(--green);color:#fff}
+.mbtn.skip.on{background:var(--ink3);border-color:var(--ink3);color:#fff}
+.mbtn.heart.on{color:var(--red)}
+.mbtn.heart.on:hover{color:var(--red)}
+/* A read paper stays visible but recedes; not-interested is dimmer still. */
+.artcard.isread h4 a{color:var(--ink3);font-weight:500}
+.artcard.isread .artmeta{opacity:.7}
+.artcard.isskip{opacity:.5}
+.artcard.isskip h4 a{text-decoration:line-through;color:var(--ink3)}
+.chip.pre{border-style:dashed}
+.chip.pre[aria-pressed="true"]{border-style:solid;background:var(--blue);border-color:var(--blue)}
+.hiddenbar{display:block;width:100%;text-align:center;background:none;border:0;
+  border-top:1px solid var(--rule2);cursor:pointer;padding:9px;
+  font-family:"IBM Plex Mono",monospace;font-size:11px;letter-spacing:.1em;
+  text-transform:uppercase;color:var(--ink3)}
+.hiddenbar:hover{color:var(--ink);background:#F7F9F6}
 .chips{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}
 .chip{
   padding:5px 11px;border:1px solid var(--rule);border-radius:14px;background:var(--panel);
@@ -299,10 +327,13 @@ var DEFAULTS = {
       'American Journal of Physics',
       'The Physics Teacher',
       'Physical Review Physics Education Research',
+      'European Journal of Physics',
+      'Physics Education',
       'Nuclear Instruments and Methods in Physics Research Section A'
     ],
     topics:['gamma spectroscopy','scintillation detector'],
-    mailto:'', saved:[], window:14 },
+    preprints:['physics education','undergraduate laboratory'],
+    mailto:'', saved:[], marks:{}, issns:{}, window:14 },
   plans:{ weeks:{}, semesters:[], years:{} },
   namegame:{},
   hidden:[]
@@ -1414,7 +1445,8 @@ function renderYear(main){
 
 /* ============================ digest ============================ */
 var digestOpen = false;
-var digestState = {loading:false, results:[], error:'', active:0};
+var digestShowHidden = false;
+var digestState = {loading:false, results:[], error:'', active:0, source:'CrossRef'};
 
 function renderDigest(){
   var main = document.getElementById('main');
@@ -1422,7 +1454,8 @@ function renderDigest(){
 
   var head = document.createElement('div');
   head.className = 'panel-head';
-  head.innerHTML = '<h2>Digest</h2><span class="count">CrossRef · past ' + d.window + ' days</span><span class="spacer"></span>';
+  head.innerHTML = '<h2>Digest</h2><span class="count">' + esc(digestState.source) +
+    ' · past ' + d.window + ' days</span><span class="spacer"></span>';
   var setBtn = document.createElement('button');
   setBtn.className = 'btn'; setBtn.textContent = digestOpen ? 'Close settings' : '⚙ Settings';
   setBtn.onclick = function(){ digestOpen = !digestOpen; renderMain(); };
@@ -1437,6 +1470,13 @@ function renderDigest(){
     s.className = 'card detail';
     s.appendChild(sourceEditor('Journals', d.journals, 'Journal title, e.g. American Journal of Physics'));
     s.appendChild(sourceEditor('Keyword topics', d.topics, 'Search term, e.g. scintillation detector'));
+    if(!d.preprints) d.preprints = [];
+    s.appendChild(sourceEditor('arXiv preprint searches', d.preprints, 'Search term, e.g. physics education'));
+    var pn = document.createElement('div');
+    pn.className = 'note';
+    pn.textContent = 'Preprint searches go to OpenAlex filtered to arXiv. arXiv’s own API cannot be ' +
+      'called from a web page — it sends no CORS headers — so OpenAlex stands in for it.';
+    s.appendChild(pn);
     var wf = document.createElement('div');
     wf.className = 'field';
     wf.innerHTML = '<label for="winSel">Look back</label>';
@@ -1464,22 +1504,24 @@ function renderDigest(){
     main.appendChild(s);
   }
 
-  var sections = d.journals.concat(d.topics.map(function(t){ return t; }));
+  var sections = digestSections();
   if(!sections.length){
     var e = document.createElement('div');
     e.className = 'card empty';
-    e.textContent = 'No journals or topics set. Open settings to add the first one.';
+    e.textContent = 'No journals, topics or preprint searches set. Open settings to add the first one.';
     main.appendChild(e);
     return;
   }
 
   var chips = document.createElement('div');
   chips.className = 'chips';
-  sections.forEach(function(name, i){
+  sections.forEach(function(sec, i){
     var b = document.createElement('button');
-    b.className = 'chip'; b.type = 'button';
+    b.className = 'chip' + (sec.kind === 'preprint' ? ' pre' : '');
+    b.type = 'button';
     b.setAttribute('aria-pressed', digestState.active === i ? 'true' : 'false');
-    b.textContent = name;
+    b.textContent = sec.name;
+    if(sec.kind === 'preprint') b.title = 'arXiv preprints, via OpenAlex';
     b.onclick = function(){ digestState.active = i; loadDigest(); };
     chips.appendChild(b);
   });
@@ -1491,30 +1533,32 @@ function renderDigest(){
   if(digestState.loading){
     card.innerHTML = '<div class="empty">Fetching recent work…</div>';
   } else if(digestState.error){
-    card.innerHTML = '<div class="empty">Could not reach CrossRef. Check the connection and press Refresh. ' +
-      '<br><span class="mono" style="font-size:11px">' + esc(digestState.error) + '</span></div>';
+    card.innerHTML = '<div class="empty">' + esc(digestState.error) + '</div>';
   } else if(!digestState.results.length){
     card.innerHTML = '<div class="empty">Nothing published in this window. Try a longer look-back in settings.</div>';
   } else {
-    digestState.results.forEach(function(a){
-      var el = document.createElement('div');
-      el.className = 'artcard';
-      var savedIdx = d.saved.map(function(x){ return x.doi; }).indexOf(a.doi);
-      el.innerHTML =
-        '<h4><a href="' + esc(a.url) + '" target="_blank" rel="noopener">' + esc(a.title) + '</a></h4>' +
-        '<div class="artmeta"><span>' + esc(a.authors) + '</span><span>' + esc(a.journal) + '</span><span>' + esc(a.date) + '</span></div>';
-      var h = document.createElement('button');
-      h.className = 'heart' + (savedIdx > -1 ? ' on' : '');
-      h.type = 'button'; h.innerHTML = '&#9829;';
-      h.title = savedIdx > -1 ? 'Remove from saved' : 'Save for later';
-      h.onclick = function(){
-        var i2 = d.saved.map(function(x){ return x.doi; }).indexOf(a.doi);
-        if(i2 > -1) d.saved.splice(i2,1); else d.saved.push(a);
-        save(); renderMain();
-      };
-      el.querySelector('.artmeta').appendChild(h);
-      card.appendChild(el);
+    d.marks = d.marks || {};
+    var shown = digestState.results.filter(function(a){
+      return digestShowHidden || d.marks[artKey(a)] !== 'skip';
     });
+    var hiddenCount = digestState.results.length - shown.length;
+
+    if(!shown.length){
+      card.innerHTML = '<div class="empty">Everything here is marked not interested.</div>';
+    }
+    shown.forEach(function(a){
+      card.appendChild(articleCard(a, d));
+    });
+
+    if(hiddenCount || digestShowHidden){
+      var hb = document.createElement('button');
+      hb.className = 'hiddenbar'; hb.type = 'button';
+      hb.textContent = digestShowHidden
+        ? 'Hide the ones marked not interested'
+        : hiddenCount + ' hidden · show';
+      hb.onclick = function(){ digestShowHidden = !digestShowHidden; renderMain(); };
+      card.appendChild(hb);
+    }
   }
   main.appendChild(card);
 
@@ -1532,9 +1576,12 @@ function renderDigest(){
       el.innerHTML = '<h4><a href="' + esc(a.url) + '" target="_blank" rel="noopener">' + esc(a.title) + '</a></h4>' +
         '<div class="artmeta"><span>' + esc(a.journal) + '</span><span>' + esc(a.date) + '</span></div>';
       var x = document.createElement('button');
-      x.className = 'heart on'; x.type = 'button'; x.innerHTML = '&#9829;'; x.title = 'Remove from saved';
+      x.className = 'mbtn heart on'; x.type = 'button'; x.innerHTML = '&#9829;';
+      x.title = 'Remove from saved';
+      x.setAttribute('aria-label', 'Remove from saved: ' + a.title);
       x.onclick = function(){
-        DB.digest.saved = DB.digest.saved.filter(function(o){ return o.doi !== a.doi; });
+        var k = artKey(a);
+        DB.digest.saved = DB.digest.saved.filter(function(o){ return artKey(o) !== k; });
         save(); renderMain();
       };
       el.querySelector('.artmeta').appendChild(x);
@@ -1542,6 +1589,60 @@ function renderDigest(){
     });
     main.appendChild(sc);
   }
+}
+
+/* One result row: title link, metadata, and the read / not-interested / save
+   actions. Marks live in DB.digest.marks keyed by artKey so they survive a
+   refetch — the same paper keeps its state next time it comes back. */
+function articleCard(a, d){
+  var key = artKey(a);
+  var mark = d.marks[key] || '';
+  var savedIdx = d.saved.map(function(x){ return artKey(x); }).indexOf(key);
+
+  var el = document.createElement('div');
+  el.className = 'artcard' + (mark === 'read' ? ' isread' : '') + (mark === 'skip' ? ' isskip' : '');
+  el.innerHTML =
+    '<h4><a href="' + esc(a.url) + '" target="_blank" rel="noopener">' + esc(a.title) + '</a></h4>' +
+    '<div class="artmeta"><span>' + esc(a.authors) + '</span><span>' + esc(a.journal) + '</span>' +
+    '<span>' + esc(a.date) + '</span></div>';
+
+  var acts = document.createElement('div');
+  acts.className = 'artacts';
+
+  function markBtn(value, glyph, onLabel, offLabel){
+    var b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'mbtn ' + value + (mark === value ? ' on' : '');
+    b.innerHTML = glyph;
+    b.title = mark === value ? onLabel : offLabel;
+    b.setAttribute('aria-pressed', mark === value ? 'true' : 'false');
+    b.setAttribute('aria-label', (mark === value ? onLabel : offLabel) + ': ' + a.title);
+    b.onclick = function(){
+      /* Clicking the active mark clears it, so a mis-click is one click to undo. */
+      if(d.marks[key] === value) delete d.marks[key];
+      else d.marks[key] = value;
+      save(); renderMain();
+    };
+    return b;
+  }
+  acts.appendChild(markBtn('read', '&#10003;', 'Marked read — click to clear', 'Mark as read'));
+  acts.appendChild(markBtn('skip', '&#10005;', 'Marked not interested — click to clear', 'Not interested'));
+
+  var h = document.createElement('button');
+  h.className = 'mbtn heart' + (savedIdx > -1 ? ' on' : '');
+  h.type = 'button'; h.innerHTML = '&#9829;';
+  h.title = savedIdx > -1 ? 'Remove from saved' : 'Save for later';
+  h.setAttribute('aria-pressed', savedIdx > -1 ? 'true' : 'false');
+  h.setAttribute('aria-label', (savedIdx > -1 ? 'Remove from saved' : 'Save for later') + ': ' + a.title);
+  h.onclick = function(){
+    var i2 = d.saved.map(function(x){ return artKey(x); }).indexOf(key);
+    if(i2 > -1) d.saved.splice(i2,1); else d.saved.push(a);
+    save(); renderMain();
+  };
+  acts.appendChild(h);
+
+  el.appendChild(acts);
+  return el;
 }
 
 function sourceEditor(label, arr, ph){
@@ -1573,46 +1674,193 @@ function sourceEditor(label, arr, ph){
   return wrap;
 }
 
-function loadDigest(){
+/* The three source kinds, flattened in the order their chips appear. */
+function digestSections(){
+  var d = DB.digest, out = [];
+  (d.journals || []).forEach(function(n){ out.push({name:n, kind:'journal'}); });
+  (d.topics || []).forEach(function(n){ out.push({name:n, kind:'topic'}); });
+  (d.preprints || []).forEach(function(n){ out.push({name:n, kind:'preprint'}); });
+  return out;
+}
+
+/* Stable per-article key for read/skip/save state. CrossRef always has a DOI;
+   OpenAlex preprints may not, so fall back to the OpenAlex work id. */
+function artKey(a){ return a.doi || a.id || a.url; }
+
+function daysAgoISO(n){
+  var t = new Date();
+  t.setDate(t.getDate() - n);
+  return t.getFullYear() + '-' + String(t.getMonth()+1).padStart(2,'0') + '-' + String(t.getDate()).padStart(2,'0');
+}
+
+function mailtoParam(){
+  var m = DB.digest.mailto;
+  return m ? '&mailto=' + encodeURIComponent(m) : '';
+}
+
+/* CrossRef's query.container-title is a fuzzy search: asking it for "American
+   Journal of Physics" happily returns the American Ceramic Society. Resolving
+   the title to an ISSN first and querying /journals/{issn}/works is exact.
+   Results are cached in DB.digest.issns so this costs one extra call per
+   journal, once. */
+function resolveIssn(name, cb){
   var d = DB.digest;
-  var sections = d.journals.concat(d.topics);
-  var name = sections[digestState.active];
-  if(!name){ renderMain(); return; }
-  var isTopic = digestState.active >= d.journals.length;
-  var from = new Date();
-  from.setDate(from.getDate() - d.window);
-  var fromStr = from.getFullYear() + '-' + String(from.getMonth()+1).padStart(2,'0') + '-' + String(from.getDate()).padStart(2,'0');
+  d.issns = d.issns || {};
+  if(d.issns[name]){ cb(d.issns[name].issn, d.issns[name].title); return; }
+  fetch('https://api.crossref.org/journals?rows=6&query=' + encodeURIComponent(name) + mailtoParam())
+    .then(function(r){ if(!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+    .then(function(j){
+      var want = normName(name), best = null, bestScore = -1;
+      ((j.message && j.message.items) || []).forEach(function(it){
+        var issn = (it.ISSN || [])[0];
+        if(!issn) return;
+        var got = normName(it.title || ''), sc;
+        /* Exact beats prefix beats substring beats fuzzy — CrossRef's own
+           ranking puts "Educational Physics" above "Physics Education". */
+        if(got === want) sc = 3;
+        else if(got.indexOf(want) === 0) sc = 2;
+        else if(got.indexOf(want) > -1) sc = 1;
+        else sc = prefixScore(want, got);
+        if(sc > bestScore){ bestScore = sc; best = {issn:issn, title:it.title || name}; }
+      });
+      if(!best) throw new Error('no matching journal');
+      d.issns[name] = best; save();
+      cb(best.issn, best.title);
+    })
+    .catch(function(e){ cb(null, null, e); });
+}
 
-  var url = 'https://api.crossref.org/works?rows=25&sort=published&order=desc' +
-    '&filter=from-pub-date:' + fromStr +
-    (isTopic ? '&query.bibliographic=' : '&query.container-title=') + encodeURIComponent(name) +
-    (d.mailto ? '&mailto=' + encodeURIComponent(d.mailto) : '');
+/* OpenAlex keeps two records per arXiv paper — one carrying a 10.48550/arxiv
+   DOI and one without — so keying on id alone leaves visible duplicates.
+   Collapse on normalised title too, preferring the record with a DOI. */
+function dedupeArticles(items){
+  var byTitle = {}, order = [];
+  items.forEach(function(a){
+    var k = artKey(a);
+    if(!k) return;
+    var t = normName(a.title);
+    if(!t){ order.push(k); byTitle[k] = a; return; }
+    var prev = byTitle[t];
+    if(!prev){ order.push(t); byTitle[t] = a; return; }
+    if(!prev.doi && a.doi) byTitle[t] = a;   /* keep the more canonical record */
+  });
+  return order.map(function(t){ return byTitle[t]; }).filter(Boolean);
+}
 
-  digestState.loading = true; digestState.error = ''; renderMain();
+function runDigestFetch(url, kind, sourceLabel){
   fetch(url).then(function(r){
     if(!r.ok) throw new Error('HTTP ' + r.status);
     return r.json();
   }).then(function(j){
-    digestState.results = (j.message.items || []).map(function(it){
-      var au = (it.author || []).slice(0,3).map(function(a){
-        return [a.given, a.family].filter(Boolean).join(' ');
-      }).join(', ');
-      if((it.author || []).length > 3) au += ' et al.';
-      var parts = ((it.published && it.published['date-parts']) || [[]])[0] || [];
-      return {
-        doi: it.DOI,
-        title: Array.isArray(it.title) ? (it.title[0] || 'Untitled') : (it.title || 'Untitled'),
-        authors: au || 'No listed authors',
-        journal: (it['container-title'] || [])[0] || '',
-        date: parts.join('-'),
-        url: it.URL || ('https://doi.org/' + it.DOI)
-      };
-    });
+    var items = kind === 'openalex' ? mapOpenAlex(j) : mapCrossref(j);
+    digestState.results = dedupeArticles(items);
+    digestState.source = sourceLabel;
     digestState.loading = false; renderMain();
   }).catch(function(err){
     digestState.loading = false;
-    digestState.error = err.message || String(err);
+    digestState.error = 'Could not reach ' + (kind === 'openalex' ? 'OpenAlex' : 'CrossRef') +
+      '. Check the connection and press Refresh. (' + (err.message || String(err)) + ')';
     renderMain();
+  });
+}
+
+function loadDigest(){
+  var d = DB.digest;
+  var sec = digestSections()[digestState.active];
+  if(!sec){ renderMain(); return; }
+  var fromStr = daysAgoISO(d.window);
+  var todayStr = daysAgoISO(0);
+  digestState.loading = true; digestState.error = ''; digestShowHidden = false; renderMain();
+
+  if(sec.kind === 'preprint'){
+    /* arXiv sends no CORS headers, so it cannot be called from a page at all.
+       OpenAlex can, and indexes arXiv — S4306400194 is arXiv as a source.
+       Relevance ordering (OpenAlex's default) beats date ordering here; the
+       date filter already limits the window. */
+    runDigestFetch(
+      'https://api.openalex.org/works' +
+      '?filter=primary_location.source.id:S4306400194' +
+      ',from_publication_date:' + fromStr +
+      ',to_publication_date:' + todayStr +
+      '&search=' + encodeURIComponent(sec.name) +
+      '&per-page=25' + mailtoParam(),
+      'openalex', 'OpenAlex · arXiv');
+    return;
+  }
+
+  if(sec.kind === 'journal'){
+    resolveIssn(sec.name, function(issn, title, err){
+      if(!issn){
+        digestState.loading = false;
+        digestState.error = 'CrossRef has no journal matching “' + sec.name +
+          '”. Check the spelling in settings — it needs the journal’s full title.';
+        renderMain(); return;
+      }
+      runDigestFetch(
+        'https://api.crossref.org/journals/' + encodeURIComponent(issn) +
+        '/works?rows=25&sort=published&order=desc' +
+        '&filter=from-pub-date:' + fromStr + ',until-pub-date:' + todayStr + mailtoParam(),
+        'crossref', 'CrossRef · ' + title);
+    });
+    return;
+  }
+
+  /* Keyword topic across all of CrossRef. until-pub-date matters: without it,
+     records stamped with far-future dates sort straight to the top. */
+  runDigestFetch(
+    'https://api.crossref.org/works?rows=25&sort=published&order=desc' +
+    '&filter=from-pub-date:' + fromStr + ',until-pub-date:' + todayStr +
+    '&query.bibliographic=' + encodeURIComponent(sec.name) + mailtoParam(),
+    'crossref', 'CrossRef');
+}
+
+/* CrossRef titles carry MathML and formatting markup; strip it so the list
+   does not show stray tag fragments. */
+function plainTitle(t){
+  return String(t == null ? '' : t)
+    .replace(/<[^>]*>/g, '')
+    .replace(/\s+/g, ' ')
+    .trim() || 'Untitled';
+}
+
+function mapCrossref(j){
+  return ((j.message && j.message.items) || []).map(function(it){
+    var au = (it.author || []).slice(0,3).map(function(a){
+      return [a.given, a.family].filter(Boolean).join(' ');
+    }).join(', ');
+    if((it.author || []).length > 3) au += ' et al.';
+    var parts = ((it.published && it.published['date-parts']) || [[]])[0] || [];
+    return {
+      doi: it.DOI,
+      title: plainTitle(Array.isArray(it.title) ? it.title[0] : it.title),
+      authors: au || 'No listed authors',
+      journal: (it['container-title'] || [])[0] || '',
+      date: parts.join('-'),
+      url: it.URL || ('https://doi.org/' + it.DOI)
+    };
+  });
+}
+
+function mapOpenAlex(j){
+  return (j.results || []).map(function(w){
+    var names = (w.authorships || []).slice(0,3).map(function(a){
+      return (a.author && a.author.display_name) || '';
+    }).filter(Boolean);
+    var au = names.join(', ');
+    if((w.authorships || []).length > 3) au += ' et al.';
+    var loc = w.primary_location || {};
+    /* OpenAlex names the source "arXiv (Cornell University)"; the parenthetical
+       just costs room in a one-line metadata row. */
+    var src = ((loc.source && loc.source.display_name) || 'arXiv').replace(/\s*\(.*\)\s*$/, '');
+    return {
+      id: w.id,
+      doi: w.doi || '',
+      title: plainTitle(w.title || w.display_name),
+      authors: au || 'No listed authors',
+      journal: src,
+      date: w.publication_date || '',
+      url: loc.landing_page_url || w.doi || w.id
+    };
   });
 }
 

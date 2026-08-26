@@ -52,8 +52,24 @@ If any of that matters more than convenience, download the two files and open
   is center-cropped and shrunk to a 160px thumbnail before it is stored, so a
   full roster stays well inside the local-storage budget. Students without a
   photo are simply skipped.
-- **Digest** queries the CrossRef public API from the browser. Adding a contact
-  email in Digest settings puts you in CrossRef's polite pool — faster and more
-  reliable service. It is never displayed on the page.
+- **Digest** is a live literature feed, not a record of your own papers. It
+  queries public APIs from the browser each time you open it, over a 7/14/30/60
+  day look-back:
+  - **Journals** resolve to an ISSN and pull from CrossRef. The ISSN step
+    matters — CrossRef's journal-title search is fuzzy enough to answer
+    "American Journal of Physics" with the American Ceramic Society.
+  - **Keyword topics** search all of CrossRef.
+  - **arXiv preprint searches** go to OpenAlex filtered to arXiv. arXiv's own
+    API sends no CORS headers and cannot be called from a web page at all, so
+    OpenAlex stands in for it.
+
+  Each result can be marked **read** (stays visible, greyed), **not interested**
+  (hidden, with a "N hidden · show" toggle to bring them back), or **saved** for
+  a reading list. Marks are keyed by DOI, so a paper keeps its state the next
+  time the same search returns it.
+
+  Adding a contact email in Digest settings puts you in CrossRef's and
+  OpenAlex's polite pools — faster, more reliable service. It is never
+  displayed on the page.
 - Tabs you don't use can be hidden from **⚙ Tabs** in the header. Hiding keeps
   the data; unchecking brings the tab back.
