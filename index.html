@@ -125,6 +125,33 @@ input:focus,select:focus,textarea:focus{outline:2px solid var(--blue);outline-of
 .photo-ctrls input[type=file]{font:inherit;font-size:12px;max-width:210px}
 .photo-note{flex-basis:100%;font-size:11.5px;color:var(--ink3);line-height:1.5}
 
+/* roster import */
+.imp{padding:4px 0}
+.imp-step{padding:16px 18px;border-bottom:1px solid var(--rule2)}
+.imp-step:last-child{border-bottom:0}
+.imp-step h3{margin:0 0 8px;font-size:15px;display:flex;align-items:center;gap:9px}
+.imp-step .stepn{display:inline-flex;align-items:center;justify-content:center;
+  width:20px;height:20px;border-radius:50%;background:var(--green);color:#fff;
+  font-family:"IBM Plex Mono",monospace;font-size:11px;font-weight:600;flex:none}
+.imp-step .opt{font-family:"IBM Plex Mono",monospace;font-size:10px;letter-spacing:.12em;
+  text-transform:uppercase;color:var(--ink3);font-weight:400}
+.imp-help{margin:0 0 10px;font-size:12.5px;color:var(--ink2);line-height:1.6;max-width:70ch}
+.imp-help code{font-family:"IBM Plex Mono",monospace;font-size:11.5px;background:var(--surface);
+  padding:1px 4px;border-radius:2px}
+.imp-step textarea{min-height:110px;margin-bottom:10px}
+.imp-step input[type=file]{font:inherit;font-size:12px;display:block;margin-top:4px}
+.imp-prog{font-family:"IBM Plex Mono",monospace;font-size:11.5px;color:var(--ink3);margin-left:12px}
+.imp-warn{background:#FBF3E0;border:1px solid var(--amber);border-radius:var(--radius);
+  padding:10px 14px;font-size:13px;color:#6B4B08;margin-bottom:12px;line-height:1.55}
+.imp-table{width:100%;border-collapse:collapse;font-size:13px}
+.imp-table th,.imp-table td{border:1px solid var(--rule2);padding:7px 10px;text-align:left;vertical-align:middle}
+.imp-table th{background:#F3F6F2;font-family:"IBM Plex Sans Condensed",sans-serif;font-size:12px;
+  letter-spacing:.06em;text-transform:uppercase;color:var(--ink2)}
+.imp-thumb{width:40px;height:40px;object-fit:cover;border:1px solid var(--rule);border-radius:2px;display:block}
+.imp-nophoto{color:var(--ink3);font-family:"IBM Plex Mono",monospace;font-size:12px}
+.imp-sel{max-width:210px;font-size:12.5px;padding:5px 7px}
+.imp-foot{display:flex;align-items:center;gap:4px;margin-top:14px;flex-wrap:wrap}
+
 /* checklist field */
 .checks{border:1px solid var(--rule);border-radius:var(--radius);background:#FCFDFC}
 .check{display:flex;gap:9px;align-items:center;padding:7px 10px;border-bottom:1px solid var(--rule2)}
@@ -458,6 +485,396 @@ function renderToggles(){
 }
 
 /* ============================ generic entity view ============================ */
+/* ======================= roster import =======================
+   Bulk-loads a class list: names from a pasted column or a CSV, photos from a
+   picked folder, matched by normalised name. Everything happens in the browser
+   — nothing is uploaded. */
+
+var importing = false;
+var impPhotos = [];   /* [{name, key, thumb}] once processed */
+var impRows = [];     /* [{name, photoIdx, status}] after matching */
+var impCourseId = ''; /* captured at match time — the form is gone by review */
+var impNamesText = ''; /* kept so Back does not wipe what was pasted */
+
+/* Strip accents and punctuation so "Alex González" and "AlexGonzalez" agree.
+   NFD splits an accented letter into base + combining mark, and the [^a-z]
+   filter then drops the mark along with spaces, hyphens and apostrophes. */
+function normName(s){
+  return String(s == null ? '' : s)
+    .normalize('NFD')
+    .toLowerCase().replace(/[^a-z]/g, '');
+}
+/* Match on first + last token only: photo filenames routinely drop middle names. */
+function nameKey(n){
+  var t = String(n).trim().split(/\s+/);
+  return normName(t[0] + (t.length > 1 ? t[t.length - 1] : ''));
+}
+function prefixScore(a, b){
+  var i = 0, m = Math.min(a.length, b.length);
+  while(i < m && a[i] === b[i]) i++;
+  return i / Math.max(a.length, b.length, 1);
+}
+
+/* Minimal CSV row splitter — handles quoted cells containing commas. */
+function csvCells(line){
+  var out = [], cur = '', q = false;
+  for(var i = 0; i < line.length; i++){
+    var c = line[i];
+    if(q){
+      if(c === '"' && line[i+1] === '"'){ cur += '"'; i++; }
+      else if(c === '"'){ q = false; }
+      else cur += c;
+    } else if(c === '"'){ q = true; }
+    else if(c === ','){ out.push(cur); cur = ''; }
+    else cur += c;
+  }
+  out.push(cur);
+  return out;
+}
+
+function cleanName(s){
+  s = String(s || '').replace(/\[CONFIDENTIAL\]/ig, '').replace(/\s+/g, ' ').trim();
+  /* Banner-style "Last, First Middle" -> "First Middle Last" */
+  if(s.indexOf(',') > -1){
+    var p = s.split(',');
+    if(p.length === 2 && p[0].trim() && p[1].trim()) s = p[1].trim() + ' ' + p[0].trim();
+  }
+  return s.replace(/\s+/g, ' ').trim();
+}
+
+function parseNames(text){
+  var lines = String(text).split(/\r?\n/).map(function(l){ return l.trim(); })
+    .filter(function(l){ return l.length; });
+  if(!lines.length) return [];
+  var cells = lines.map(csvCells);
+  /* Pick the column: a header cell containing "name", else the first column. */
+  var col = 0, start = 0;
+  var head = cells[0].map(function(c){ return c.toLowerCase().trim(); });
+  var hit = -1;
+  head.forEach(function(h, i){ if(hit < 0 && /name/.test(h)) hit = i; });
+  if(hit > -1){ col = hit; start = 1; }
+  var out = [];
+  for(var i = start; i < cells.length; i++){
+    var n = cleanName(cells[i][col] !== undefined ? cells[i][col] : cells[i][0]);
+    /* Drop obvious non-name rows carried over from a spreadsheet export. */
+    if(!n) continue;
+    if(!/[a-z]/i.test(n)) continue;
+    if(out.indexOf(n) === -1) out.push(n);
+  }
+  return out;
+}
+
+function renderImport(){
+  var main = document.getElementById('main');
+
+  var head = document.createElement('div');
+  head.className = 'panel-head';
+  head.innerHTML = '<h2>Import roster</h2><span class="count">nothing leaves this browser</span><span class="spacer"></span>';
+  var cancel = document.createElement('button');
+  cancel.className = 'btn';
+  cancel.textContent = 'Cancel';
+  cancel.onclick = function(){
+    importing = false; impPhotos = []; impRows = []; impNamesText = '';
+    renderMain();
+  };
+  head.appendChild(cancel);
+  main.appendChild(head);
+
+  var card = document.createElement('div');
+  card.className = 'card imp';
+
+  /* ---- step 1: course ---- */
+  var s1 = document.createElement('div');
+  s1.className = 'imp-step';
+  s1.innerHTML = '<h3><span class="stepn">1</span>Course</h3>';
+  var csel = document.createElement('select');
+  csel.id = 'impCourse';
+  if(!DB.courses.length){
+    csel.innerHTML = '<option value="">No courses yet — add one on the Courses tab</option>';
+  } else {
+    DB.courses.forEach(function(c){
+      var o = document.createElement('option');
+      o.value = c.id;
+      o.textContent = (c.code || c.title || 'Course') + (c.term ? ' · ' + c.term : '');
+      csel.appendChild(o);
+    });
+  }
+  s1.appendChild(csel);
+  card.appendChild(s1);
+
+  /* ---- step 2: names ---- */
+  var s2 = document.createElement('div');
+  s2.className = 'imp-step';
+  s2.innerHTML = '<h3><span class="stepn">2</span>Names</h3>' +
+    '<p class="imp-help">Paste one name per line — selecting the name column in Excel and copying works directly. ' +
+    'Or choose a <code>.csv</code>; a column headed <em>Name</em> is used if present, otherwise the first. ' +
+    '<em>Last, First</em> is flipped and <code>[CONFIDENTIAL]</code> markers are dropped.</p>';
+  var ta = document.createElement('textarea');
+  ta.id = 'impNames'; ta.rows = 6;
+  ta.placeholder = 'Maria Chen\nDevin Okafor\nSam Patel';
+  ta.value = impNamesText;
+  ta.oninput = function(){ impNamesText = ta.value; };
+  s2.appendChild(ta);
+  var csvIn = document.createElement('input');
+  csvIn.type = 'file'; csvIn.accept = '.csv,text/csv,text/plain';
+  csvIn.onchange = function(){
+    var f = csvIn.files && csvIn.files[0];
+    if(!f) return;
+    var fr = new FileReader();
+    fr.onload = function(){ ta.value = fr.result; impNamesText = ta.value; csvIn.value = ''; };
+    fr.readAsText(f);
+  };
+  s2.appendChild(csvIn);
+  card.appendChild(s2);
+
+  /* ---- step 3: photos ---- */
+  var s3 = document.createElement('div');
+  s3.className = 'imp-step';
+  s3.innerHTML = '<h3><span class="stepn">3</span>Photos <span class="opt">optional</span></h3>' +
+    '<p class="imp-help">Pick the folder of photos, or select the files. They are matched to names by filename ' +
+    '(<code>FirstLast.jpg</code>), ignoring accents, middle names and punctuation. Anything unmatched you can set by hand next. ' +
+    'Each photo is cropped square and shrunk to a thumbnail before it is stored.</p>';
+  var pin = document.createElement('input');
+  pin.type = 'file'; pin.multiple = true; pin.accept = 'image/*';
+  try{ pin.setAttribute('webkitdirectory',''); pin.setAttribute('directory',''); }catch(e){}
+  pin.id = 'impPhotoInput';
+  s3.appendChild(pin);
+  var pfiles = document.createElement('input');
+  pfiles.type = 'file'; pfiles.multiple = true; pfiles.accept = 'image/*';
+  pfiles.id = 'impPhotoFiles';
+  var alt = document.createElement('p');
+  alt.className = 'imp-help';
+  alt.textContent = 'If picking a folder is blocked, select the image files individually instead:';
+  s3.appendChild(alt);
+  s3.appendChild(pfiles);
+  card.appendChild(s3);
+
+  /* ---- action ---- */
+  var act = document.createElement('div');
+  act.className = 'imp-step';
+  var go = document.createElement('button');
+  go.className = 'btn primary';
+  go.textContent = 'Match names and photos';
+  var prog = document.createElement('span');
+  prog.className = 'imp-prog'; prog.id = 'impProg';
+  go.onclick = function(){
+    var names = parseNames(document.getElementById('impNames').value);
+    if(!names.length){ prog.textContent = 'No names found — paste a column of names first.'; return; }
+    impCourseId = csel.value || '';
+    if(!impCourseId){ prog.textContent = 'Add a course on the Courses tab first.'; return; }
+    var files = [];
+    [pin, pfiles].forEach(function(inp){
+      if(inp.files) for(var i = 0; i < inp.files.length; i++) files.push(inp.files[i]);
+    });
+    files = files.filter(function(f){ return /\.(jpe?g|jfif|png|gif|webp|bmp)$/i.test(f.name) || /^image\//.test(f.type); });
+    go.disabled = true;
+    prog.textContent = files.length ? 'Processing 0 / ' + files.length + ' photos…' : 'Matching…';
+    processPhotos(files, function(done, total){
+      prog.textContent = 'Processing ' + done + ' / ' + total + ' photos…';
+    }, function(){
+      matchRoster(names);
+      importing = 'review';
+      renderMain();
+    });
+  };
+  act.appendChild(go);
+  act.appendChild(prog);
+  card.appendChild(act);
+
+  main.appendChild(card);
+}
+
+function processPhotos(files, onProgress, done){
+  impPhotos = [];
+  var i = 0;
+  if(!files.length){ done(); return; }
+  function step(){
+    if(i >= files.length){ done(); return; }
+    var f = files[i];
+    shrinkImage(f, 160, function(thumb, err){
+      /* A file that will not decode is simply skipped — it just stays unmatched. */
+      if(!err && thumb){
+        impPhotos.push({ name:f.name, key:normName(f.name.replace(/\.[^.]+$/, '')), thumb:thumb });
+      }
+      i++; onProgress(i, files.length); step();
+    });
+  }
+  step();
+}
+
+function matchRoster(names){
+  impRows = [];
+  var used = {};
+  names.forEach(function(n){
+    var k = nameKey(n);
+    var idx = -1, status = 'none';
+    for(var i = 0; i < impPhotos.length; i++){
+      if(used[i]) continue;
+      if(impPhotos[i].key === k){ idx = i; status = 'exact'; break; }
+    }
+    if(idx < 0){
+      var bs = 0, bi = -1;
+      for(var j = 0; j < impPhotos.length; j++){
+        if(used[j]) continue;
+        var sc = prefixScore(k, impPhotos[j].key);
+        if(sc > bs){ bs = sc; bi = j; }
+      }
+      if(bi > -1 && bs >= 0.75){ idx = bi; status = 'fuzzy'; }
+    }
+    if(idx > -1) used[idx] = true;
+    /* Flag names already on the roster for this course so we do not duplicate them. */
+    var dupe = DB.students.some(function(s){
+      return s.course === impCourseId && normName(s.name) === normName(n);
+    });
+    impRows.push({ name:n, photoIdx:idx, status:status, dupe:dupe, skip:dupe });
+  });
+}
+
+function renderReview(){
+  var main = document.getElementById('main');
+  var cid = impCourseId;
+
+  var counts = {exact:0, fuzzy:0, none:0, dupe:0};
+  impRows.forEach(function(r){
+    if(r.dupe) counts.dupe++;
+    counts[r.status]++;
+  });
+  var willAdd = impRows.filter(function(r){ return !r.skip; }).length;
+
+  var head = document.createElement('div');
+  head.className = 'panel-head';
+  head.innerHTML = '<h2>Review import</h2><span class="count">' +
+    impRows.length + ' names · ' + counts.exact + ' matched · ' +
+    counts.fuzzy + ' to check · ' + counts.none + ' without a photo' +
+    (counts.dupe ? ' · ' + counts.dupe + ' already on the roster' : '') +
+    '</span><span class="spacer"></span>';
+  var back = document.createElement('button');
+  back.className = 'btn';
+  back.textContent = 'Back';
+  back.onclick = function(){ importing = true; renderMain(); };
+  head.appendChild(back);
+  main.appendChild(head);
+
+  if(counts.fuzzy){
+    var warn = document.createElement('div');
+    warn.className = 'imp-warn';
+    warn.textContent = counts.fuzzy + ' photo' + (counts.fuzzy === 1 ? ' was' : 's were') +
+      ' matched on a near-miss rather than an exact filename. Those rows are marked — check them before adding.';
+    main.appendChild(warn);
+  }
+
+  var card = document.createElement('div');
+  card.className = 'card';
+  var tbl = document.createElement('table');
+  tbl.className = 'imp-table';
+  tbl.innerHTML = '<thead><tr><th>Add</th><th>Photo</th><th>Name</th><th>Matched file</th><th>Status</th></tr></thead>';
+  var tb = document.createElement('tbody');
+
+  impRows.forEach(function(r, ri){
+    var tr = document.createElement('tr');
+
+    var tdAdd = document.createElement('td');
+    var cb = document.createElement('input');
+    cb.type = 'checkbox'; cb.checked = !r.skip;
+    cb.setAttribute('aria-label', 'Add ' + r.name);
+    cb.onchange = function(){ r.skip = !cb.checked; refreshAddBtn(); };
+    tdAdd.appendChild(cb);
+    tr.appendChild(tdAdd);
+
+    var tdImg = document.createElement('td');
+    if(r.photoIdx > -1){
+      var im = document.createElement('img');
+      im.className = 'imp-thumb'; im.src = impPhotos[r.photoIdx].thumb; im.alt = '';
+      tdImg.appendChild(im);
+    } else {
+      tdImg.innerHTML = '<span class="imp-nophoto">—</span>';
+    }
+    tr.appendChild(tdImg);
+
+    var tdName = document.createElement('td');
+    tdName.textContent = r.name;
+    tr.appendChild(tdName);
+
+    var tdSel = document.createElement('td');
+    var sel = document.createElement('select');
+    sel.className = 'imp-sel';
+    var none = document.createElement('option');
+    none.value = '-1'; none.textContent = '— no photo —';
+    sel.appendChild(none);
+    impPhotos.forEach(function(p, pi){
+      var o = document.createElement('option');
+      o.value = String(pi); o.textContent = p.name;
+      sel.appendChild(o);
+    });
+    sel.value = String(r.photoIdx);
+    sel.setAttribute('aria-label', 'Photo for ' + r.name);
+    sel.onchange = function(){
+      r.photoIdx = parseInt(sel.value, 10);
+      r.status = r.photoIdx > -1 ? 'manual' : 'none';
+      renderMain();
+    };
+    tdSel.appendChild(sel);
+    tr.appendChild(tdSel);
+
+    var tdSt = document.createElement('td');
+    var label = {exact:'matched', fuzzy:'check this', none:'no photo', manual:'set by hand'}[r.status];
+    var cls = {exact:'ok', fuzzy:'warn', none:'', manual:'ok'}[r.status];
+    tdSt.innerHTML = (r.dupe ? '<span class="pill warn">already on roster</span> ' : '') +
+      (cls ? '<span class="pill ' + cls + '">' + label + '</span>' : '<span class="imp-nophoto">' + label + '</span>');
+    tr.appendChild(tdSt);
+
+    tb.appendChild(tr);
+  });
+  tbl.appendChild(tb);
+  card.appendChild(tbl);
+  main.appendChild(card);
+
+  var foot = document.createElement('div');
+  foot.className = 'imp-foot';
+  var addBtn = document.createElement('button');
+  addBtn.className = 'btn primary'; addBtn.id = 'impAdd';
+  addBtn.textContent = 'Add ' + willAdd + ' student' + (willAdd === 1 ? '' : 's');
+  addBtn.disabled = !willAdd || !cid;
+  addBtn.onclick = function(){ commitImport(cid); };
+  foot.appendChild(addBtn);
+  var note = document.createElement('span');
+  note.className = 'imp-prog'; note.id = 'impNote';
+  if(!cid) note.textContent = 'Pick a course first.';
+  foot.appendChild(note);
+  main.appendChild(foot);
+}
+
+function refreshAddBtn(){
+  var n = impRows.filter(function(r){ return !r.skip; }).length;
+  var b = document.getElementById('impAdd');
+  if(!b) return;
+  b.textContent = 'Add ' + n + ' student' + (n === 1 ? '' : 's');
+  b.disabled = !n;
+}
+
+function commitImport(cid){
+  var added = 0;
+  var snapshot = JSON.stringify(DB.students);
+  impRows.forEach(function(r){
+    if(r.skip) return;
+    var rec = { id:uid(), name:r.name, course:cid };
+    if(r.photoIdx > -1) rec.photo = impPhotos[r.photoIdx].thumb;
+    DB.students.push(rec);
+    added++;
+  });
+  if(!saveGuarded()){
+    /* Roll back rather than leave a half-written roster behind. */
+    DB.students = JSON.parse(snapshot);
+    save();
+    var note = document.getElementById('impNote');
+    if(note) note.textContent = 'Out of browser storage — nothing was added. Import fewer students, or drop some photos.';
+    return;
+  }
+  importing = false; impPhotos = []; impRows = []; impNamesText = '';
+  selected['students'] = null;
+  renderMain();
+}
+
 function renderEntity(key){
   var cfg = ENTITIES[key];
   var rows = DB[key];
@@ -467,6 +884,13 @@ function renderEntity(key){
   head.className = 'panel-head';
   head.innerHTML = '<h2>' + esc(cfg.label) + '</h2>' +
     '<span class="count">' + rows.length + ' on file</span><span class="spacer"></span>';
+  if(key === 'students'){
+    var imp = document.createElement('button');
+    imp.className = 'btn';
+    imp.textContent = 'Import roster';
+    imp.onclick = function(){ importing = true; renderMain(); };
+    head.appendChild(imp);
+  }
   var add = document.createElement('button');
   add.className = 'btn primary';
   add.textContent = '+ ' + cfg.addLabel;
@@ -634,7 +1058,12 @@ function photoField(rec, f, key){
 /* Center-crops to a square and re-encodes small, so a roster of photos
    stays well inside the local-storage budget. */
 function shrinkImage(fl, size, cb){
-  if(!/^image\//.test(fl.type)){ cb(null, 'That file is not an image.'); return; }
+  /* Trust the extension when the OS reports no MIME type — Windows often hands
+     back an empty type for .jfif. A file that really is not an image then fails
+     to decode below, which is reported just the same. */
+  var looksImage = /^image\//.test(fl.type) ||
+    (!fl.type && /\.(jpe?g|jfif|png|gif|webp|bmp)$/i.test(fl.name));
+  if(!looksImage){ cb(null, 'That file is not an image.'); return; }
   var fr = new FileReader();
   fr.onerror = function(){ cb(null, 'Could not read that file.'); };
   fr.onload = function(){
@@ -1191,6 +1620,8 @@ function loadDigest(){
 function renderMain(){
   var main = document.getElementById('main');
   main.innerHTML = '';
+  if(current === 'students' && importing === 'review'){ renderReview(); return; }
+  if(current === 'students' && importing){ renderImport(); return; }
   if(ENTITIES[current]) renderEntity(current);
   else if(current === 'todo') renderTodo();
   else if(current === 'plans') renderPlans();

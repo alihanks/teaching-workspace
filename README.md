@@ -40,6 +40,13 @@ If any of that matters more than convenience, download the two files and open
 
 - **Courses** drive the rest of the app. Add them first: TAs, students, and the
   semester grid all reference them.
+- **Import roster** on the Students tab bulk-loads a class list. Paste a column
+  of names (copying the name column straight out of Excel works) or pick a
+  `.csv`, then point it at the folder of photos. Photos are matched to names by
+  filename — `FirstLast.jpg` — ignoring accents, middle names and punctuation,
+  so `Alex González` finds `AlexGonzalez.jfif`. Near-misses are flagged rather
+  than assumed, names already on the roster are skipped, and you review and fix
+  every row before anything is added.
 - **Name game** shows a student photo and four names from the same course, and
   tracks which faces you keep missing. Add photos on the Students tab: each one
   is center-cropped and shrunk to a 160px thumbnail before it is stored, so a
