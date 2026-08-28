@@ -47,11 +47,26 @@ If any of that matters more than convenience, download the two files and open
   so `Alex González` finds `AlexGonzalez.jfif`. Near-misses are flagged rather
   than assumed, names already on the roster are skipped, and you review and fix
   every row before anything is added.
+- **Import survey** on the Students tab attaches survey responses to students so
+  the Name game can quiz on them. Works with Canvas "Student Analysis Report"
+  and Google Forms exports: identity, points and score columns are dropped, and
+  Canvas's numeric question-id prefixes are stripped. Students are matched on an
+  email column if there is one, otherwise on name.
+
+  Each question is then classified by how distinctive its answers are:
+  - near-unique answers become **who said this?** — the response is shown and
+    you pick the student;
+  - repeating answers become **what did they answer?** — the student is shown
+    and you pick from the distinct values.
+
+  A question whose answers usually contain the student's own name (*"what name
+  do you go by?"*) is flagged as giving the answer away and left off by default.
+  You review and tick every question before anything is attached.
 - **Name game** shows a student photo and four names from the same course, and
   tracks which faces you keep missing. Add photos on the Students tab: each one
   is center-cropped and shrunk to a 160px thumbnail before it is stored, so a
   full roster stays well inside the local-storage budget. Students without a
-  photo are simply skipped.
+  photo are simply skipped. If a survey is loaded, a mode switch offers **Photos**, **Survey** or **Mixed**, and a round asks one question per student whichever mode you pick.
 - **Digest** is a live literature feed, not a record of your own papers. It
   queries public APIs from the browser each time you open it, over a 7/14/30/60
   day look-back:

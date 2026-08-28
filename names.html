@@ -80,6 +80,27 @@ th{background:#F3F6F2;font-family:"IBM Plex Sans Condensed",sans-serif;font-size
 td.num{font-family:"IBM Plex Mono",monospace}
 .bad{color:var(--red);font-weight:600}
 .empty{padding:22px 14px;color:var(--ink3);font-size:13px;line-height:1.6}
+.modes{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px}
+.chip{padding:5px 12px;border:1px solid var(--rule);border-radius:14px;background:var(--panel);
+  cursor:pointer;font-size:12.5px;color:var(--ink2)}
+.chip[aria-pressed="true"]{background:var(--green);border-color:var(--green);color:#fff}
+.chip:disabled{opacity:.45;cursor:not-allowed}
+.chip:focus-visible{outline:2px solid var(--blue);outline-offset:1px}
+/* survey question presentation */
+.qquestion{font-family:"IBM Plex Sans Condensed",sans-serif;font-weight:600;font-size:17px;
+  line-height:1.4;text-align:center;max-width:640px}
+.qquote{margin:0;max-width:640px;background:var(--surface);border-left:3px solid var(--green);
+  border-radius:0 var(--radius) var(--radius) 0;padding:14px 18px;font-size:15.5px;line-height:1.6;
+  white-space:pre-wrap}
+.qwho{display:flex;flex-direction:column;align-items:center;gap:8px}
+.qphoto.small{width:110px;height:110px}
+.qname{font-family:"IBM Plex Sans Condensed",sans-serif;font-weight:700;font-size:19px}
+.choices.one{grid-template-columns:1fr;max-width:640px}
+.choice.long{align-items:flex-start;line-height:1.5}
+.choice.long .num{margin-top:2px}
+.missed .nophoto{width:88px;height:88px;border:1px solid var(--rule);border-radius:var(--radius);
+  background:var(--surface);display:flex;align-items:center;justify-content:center;
+  font-family:"IBM Plex Sans Condensed",sans-serif;font-weight:700;font-size:30px;color:var(--ink3)}
 @media(prefers-reduced-motion:reduce){*{transition:none!important}}
 </style>
 </head>
@@ -101,6 +122,8 @@ td.num{font-family:"IBM Plex Mono",monospace}
     <button class="btn" id="newRound">New round</button>
     <button class="btn" id="resetStats">Reset all-time stats</button>
   </div>
+
+  <div class="modes chips" id="modes"></div>
 
   <div class="score" id="score" hidden>
     <div><div class="k">Round</div><div class="v" id="sProgress">–</div></div>
@@ -129,19 +152,21 @@ var DB = readRaw() || {};
 DB.courses  = DB.courses  || [];
 DB.students = DB.students || [];
 DB.namegame = DB.namegame || {};
+DB.survey   = DB.survey   || {columns:[]};
 function save(){ writeRaw(DB); }
 function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g,function(c){
   return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
 
 /* ============================ round state ============================ */
-var queue = [];      /* student ids still to ask this round */
+var mode = 'photos';   /* photos | survey | mixed */
+var queue = [];        /* [{sid, want}] still to ask this round */
 var roundLen = 0;
 var correct = 0;
 var streak = 0;
 var best = 0;
-var missed = [];     /* student ids missed this round */
-var currentQ = null; /* {id, choices:[ids]} */
-var locked = false;  /* true between answering and advancing */
+var missed = [];       /* [{sid, want}] missed this round */
+var currentQ = null;
+var locked = false;
 
 var courseSel = document.getElementById('courseSel');
 var stage = document.getElementById('stage');
@@ -149,13 +174,16 @@ var stage = document.getElementById('stage');
 function studentsFor(cid){
   return DB.students.filter(function(s){ return s.course === cid; });
 }
-function withPhotos(list){
-  return list.filter(function(s){ return !!s.photo; });
-}
-function byId(id){
-  return DB.students.filter(function(s){ return s.id === id; })[0];
-}
+function withPhotos(list){ return list.filter(function(s){ return !!s.photo; }); }
+function byId(id){ return DB.students.filter(function(s){ return s.id === id; })[0]; }
 function nameOf(s){ return (s && s.name) || 'Unnamed student'; }
+
+function surveyColsFor(cid){
+  return ((DB.survey && DB.survey.columns) || []).filter(function(c){ return c.course === cid; });
+}
+function colsAnsweredBy(sid, cid){
+  return surveyColsFor(cid).filter(function(c){ return c.responses && c.responses[sid]; });
+}
 
 function shuffle(a){
   for(var i = a.length - 1; i > 0; i--){
@@ -163,6 +191,10 @@ function shuffle(a){
     var t = a[i]; a[i] = a[j]; a[j] = t;
   }
   return a;
+}
+function sample(arr, n, exclude){
+  var pool = arr.filter(function(x){ return exclude.indexOf(x) === -1; });
+  return shuffle(pool.slice()).slice(0, n);
 }
 
 function fillCourses(){
@@ -191,22 +223,98 @@ function record(id, wasRight){
   if(wasRight) st.r++; else st.w++;
   save();
 }
-
 function updateScore(){
   var box = document.getElementById('score');
   if(!roundLen){ box.hidden = true; return; }
   box.hidden = false;
-  var asked = roundLen - queue.length;
-  document.getElementById('sProgress').textContent = Math.min(asked, roundLen) + ' / ' + roundLen;
+  document.getElementById('sProgress').textContent =
+    Math.min(roundLen - queue.length, roundLen) + ' / ' + roundLen;
   document.getElementById('sCorrect').textContent = correct;
   document.getElementById('sStreak').textContent = streak + (best > streak ? ' (best ' + best + ')' : '');
 }
 
+/* ============================ building questions ============================ */
+/* A round is one question per eligible student, so every student comes up once
+   however the modes are mixed. */
+function buildPool(cid){
+  var out = [];
+  studentsFor(cid).forEach(function(s){
+    var hasPhoto = !!s.photo;
+    var hasSurvey = colsAnsweredBy(s.id, cid).length > 0;
+    if(mode === 'photos'){ if(hasPhoto) out.push({sid:s.id, want:'photo'}); }
+    else if(mode === 'survey'){ if(hasSurvey) out.push({sid:s.id, want:'survey'}); }
+    else {
+      var opts = [];
+      if(hasPhoto) opts.push('photo');
+      if(hasSurvey) opts.push('survey');
+      if(opts.length) out.push({sid:s.id, want: opts[Math.floor(Math.random() * opts.length)]});
+    }
+  });
+  return out;
+}
+
+function buildQuestion(item, cid){
+  var s = byId(item.sid);
+  if(!s) return null;
+  var others = studentsFor(cid).filter(function(x){ return x.id !== s.id && x.name; });
+
+  if(item.want === 'photo'){
+    if(!s.photo) return null;
+    var picks = sample(others.map(function(x){ return x.id; }), 3, []);
+    return {
+      type: 'photo', sid: s.id,
+      photo: s.photo,
+      ask: 'Who is this?',
+      choices: shuffle(picks.concat([s.id])).map(function(id){
+        return { key:id, label:nameOf(byId(id)), correct:id === s.id };
+      })
+    };
+  }
+
+  var cols = colsAnsweredBy(s.id, cid);
+  if(!cols.length) return null;
+  var col = cols[Math.floor(Math.random() * cols.length)];
+  var mine = col.responses[s.id];
+
+  if(col.kind === 'who'){
+    /* Distractors must be students who also answered, otherwise the right
+       answer is the only plausible one. */
+    var answered = others.filter(function(x){ return col.responses[x.id]; });
+    var pool = answered.length >= 3 ? answered : others;
+    var ids = sample(pool.map(function(x){ return x.id; }), 3, []);
+    return {
+      type: 'who', sid: s.id, colId: col.id,
+      quote: mine,
+      ask: col.text,
+      choices: shuffle(ids.concat([s.id])).map(function(id){
+        return { key:id, label:nameOf(byId(id)), correct:id === s.id };
+      })
+    };
+  }
+
+  /* kind === 'what': offer distinct answer values from this column. */
+  var values = [];
+  Object.keys(col.responses).forEach(function(k){
+    var v = col.responses[k];
+    if(values.indexOf(v) === -1) values.push(v);
+  });
+  if(values.length < 2) return null;
+  var wrong = sample(values, 3, [mine]);
+  return {
+    type: 'what', sid: s.id, colId: col.id,
+    photo: s.photo || '',
+    who: nameOf(s),
+    ask: col.text,
+    choices: shuffle(wrong.concat([mine])).map(function(v){
+      return { key:v, label:v, correct:v === mine };
+    })
+  };
+}
+
 /* ============================ round flow ============================ */
-function startRound(ids){
+function startRound(items){
   var cid = courseSel.value;
-  var pool = ids ? ids.slice() : withPhotos(studentsFor(cid)).map(function(s){ return s.id; });
-  queue = shuffle(pool);
+  queue = shuffle(items ? items.slice() : buildPool(cid));
   roundLen = queue.length;
   correct = 0; streak = 0; best = 0; missed = []; currentQ = null; locked = false;
   nextQuestion();
@@ -214,101 +322,155 @@ function startRound(ids){
 
 function nextQuestion(){
   locked = false;
-  if(!queue.length){ currentQ = null; renderRoundEnd(); updateScore(); return; }
-  var id = queue.shift();
   var cid = courseSel.value;
-  /* Distractors come from the same course, so the wrong answers stay plausible. */
-  var others = studentsFor(cid)
-    .filter(function(s){ return s.id !== id && s.name; })
-    .map(function(s){ return s.id; });
-  var picks = shuffle(others).slice(0, 3);
-  currentQ = { id:id, choices: shuffle(picks.concat([id])) };
-  renderQuestion();
-  updateScore();
+  while(queue.length){
+    var item = queue.shift();
+    var q = buildQuestion(item, cid);
+    if(q){ q.item = item; currentQ = q; renderQuestion(); updateScore(); return; }
+    /* Unbuildable question (data changed mid-round) — shrink the round. */
+    roundLen--;
+  }
+  currentQ = null; renderRoundEnd(); updateScore();
 }
 
-function answer(pickedId){
+function answer(choiceKey){
   if(locked || !currentQ) return;
   locked = true;
-  var right = pickedId === currentQ.id;
-  if(right){
-    correct++; streak++; if(streak > best) best = streak;
-  } else {
-    streak = 0;
-    if(missed.indexOf(currentQ.id) === -1) missed.push(currentQ.id);
-  }
-  record(currentQ.id, right);
-  renderQuestion(pickedId);
+  var picked = currentQ.choices.filter(function(c){ return c.key === choiceKey; })[0];
+  var right = !!(picked && picked.correct);
+  if(right){ correct++; streak++; if(streak > best) best = streak; }
+  else { streak = 0; missed.push(currentQ.item); }
+  record(currentQ.sid, right);
+  renderQuestion(choiceKey);
   updateScore();
   renderStats();
 }
 
 /* ============================ rendering ============================ */
+function modeAvailability(cid){
+  var roster = studentsFor(cid);
+  return {
+    total: roster.length,
+    photos: withPhotos(roster).length,
+    survey: roster.filter(function(s){ return colsAnsweredBy(s.id, cid).length; }).length,
+    questions: surveyColsFor(cid).length
+  };
+}
+
+function renderModes(){
+  var box = document.getElementById('modes');
+  var cid = courseSel.value;
+  var av = modeAvailability(cid);
+  box.innerHTML = '';
+  [['photos','Photos', av.photos],
+   ['survey','Survey', av.survey],
+   ['mixed','Mixed', Math.max(av.photos, av.survey)]].forEach(function(m){
+    var b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'chip';
+    b.setAttribute('aria-pressed', mode === m[0] ? 'true' : 'false');
+    b.textContent = m[1] + ' (' + m[2] + ')';
+    b.disabled = !m[2];
+    b.title = m[2] ? m[2] + ' students available in this mode' : 'Nothing loaded for this mode yet';
+    b.onclick = function(){ mode = m[0]; renderStage(); renderModes(); };
+    box.appendChild(b);
+  });
+}
+
 function renderStage(){
   var cid = courseSel.value;
   var score = document.getElementById('score');
-  if(!cid){
-    stage.innerHTML = '<div class="empty">Add a course on the Courses tab first, then assign students to it.</div>';
+  function empty(msg){
+    stage.innerHTML = '<div class="empty">' + msg + '</div>';
     score.hidden = true;
-    return;
+    roundLen = 0; currentQ = null;
   }
+  if(!cid) return empty('Add a course on the Courses tab first, then assign students to it.');
   var roster = studentsFor(cid);
-  if(!roster.length){
-    stage.innerHTML = '<div class="empty">No students are assigned to this course yet. ' +
-      'Add them on the Students tab and set their Course field.</div>';
-    score.hidden = true;
-    return;
-  }
-  var photo = withPhotos(roster);
-  if(!photo.length){
-    stage.innerHTML = '<div class="empty">None of the ' + roster.length + ' students in this course have a photo yet. ' +
-      'Open a student on the Students tab and use the Photo field — pictures are cropped square, ' +
-      'shrunk to a thumbnail, and kept on this device only.</div>';
-    score.hidden = true;
-    return;
-  }
-  if(photo.length < 2){
-    stage.innerHTML = '<div class="empty">Only one student in this course has a photo, so there is nothing to tell apart yet. ' +
-      'Add a photo to at least one more student.</div>';
-    score.hidden = true;
-    return;
-  }
+  if(!roster.length) return empty('No students are assigned to this course yet. ' +
+    'Add them on the Students tab and set their Course field.');
+
+  var av = modeAvailability(cid);
+  if(mode === 'photos' && !av.photos) return empty('None of the ' + roster.length +
+    ' students in this course have a photo yet. Use <strong>Import roster</strong> on the Students tab, ' +
+    'or add photos one at a time with the Photo field.');
+  if(mode === 'photos' && av.photos < 2) return empty('Only one student has a photo, ' +
+    'so there is nothing to tell apart yet. Add a photo to at least one more student.');
+  if(mode === 'survey' && !av.questions) return empty('No survey has been loaded for this course. ' +
+    'Use <strong>Import survey</strong> on the Students tab to attach responses.');
+  if(mode === 'survey' && !av.survey) return empty('A survey is loaded, but none of its responses ' +
+    'matched a student on this course’s roster.');
+  if(mode === 'mixed' && !av.photos && !av.survey) return empty('Load photos or a survey first.');
+
   startRound();
 }
 
-function renderQuestion(pickedId){
-  var s = byId(currentQ.id);
-  if(!s){ nextQuestion(); return; }
+function choiceButton(c, i, n, isLong){
+  var b = document.createElement('button');
+  b.type = 'button';
+  b.className = 'choice' + (isLong ? ' long' : '');
+  b.innerHTML = '<span class="num">' + (i + 1) + '</span><span>' + esc(c.label) + '</span>';
+  return b;
+}
 
+function renderQuestion(pickedKey){
+  var q = currentQ;
   var box = document.createElement('div');
   box.className = 'quiz';
 
-  var img = document.createElement('img');
-  img.className = 'qphoto';
-  img.src = s.photo;
-  /* Deliberately not the name — the alt text must not give the answer away. */
-  img.alt = 'Photo of the student you are being asked to name';
-  box.appendChild(img);
+  if(q.type === 'photo'){
+    var img = document.createElement('img');
+    img.className = 'qphoto';
+    img.src = q.photo;
+    /* Never the name — the alt text must not give the answer away. */
+    img.alt = 'Photo of the student you are being asked to name';
+    box.appendChild(img);
+    var a1 = document.createElement('div');
+    a1.className = 'qask'; a1.textContent = q.ask;
+    box.appendChild(a1);
+  }
+  else if(q.type === 'who'){
+    var ctx = document.createElement('div');
+    ctx.className = 'qask'; ctx.textContent = 'Who gave this answer?';
+    box.appendChild(ctx);
+    var qq = document.createElement('div');
+    qq.className = 'qquestion'; qq.textContent = q.ask;
+    box.appendChild(qq);
+    var quote = document.createElement('blockquote');
+    quote.className = 'qquote'; quote.textContent = q.quote;
+    box.appendChild(quote);
+  }
+  else { /* what */
+    var whoWrap = document.createElement('div');
+    whoWrap.className = 'qwho';
+    if(q.photo){
+      var im2 = document.createElement('img');
+      im2.className = 'qphoto small'; im2.src = q.photo; im2.alt = '';
+      whoWrap.appendChild(im2);
+    }
+    var nm = document.createElement('div');
+    nm.className = 'qname'; nm.textContent = q.who;
+    whoWrap.appendChild(nm);
+    box.appendChild(whoWrap);
+    var a3 = document.createElement('div');
+    a3.className = 'qask'; a3.textContent = 'How did they answer?';
+    box.appendChild(a3);
+    var qq3 = document.createElement('div');
+    qq3.className = 'qquestion'; qq3.textContent = q.ask;
+    box.appendChild(qq3);
+  }
 
-  var ask = document.createElement('div');
-  ask.className = 'qask';
-  ask.textContent = 'Who is this?';
-  box.appendChild(ask);
-
+  var longChoices = q.choices.some(function(c){ return String(c.label).length > 34; });
   var choices = document.createElement('div');
-  choices.className = 'choices';
-  currentQ.choices.forEach(function(oid, i){
-    var c = byId(oid);
-    var b = document.createElement('button');
-    b.type = 'button';
-    b.className = 'choice';
-    b.innerHTML = '<span class="num">' + (i + 1) + '</span><span>' + esc(nameOf(c)) + '</span>';
+  choices.className = 'choices' + (longChoices ? ' one' : '');
+  q.choices.forEach(function(c, i){
+    var b = choiceButton(c, i, q.choices.length, longChoices);
     if(locked){
       b.disabled = true;
-      if(oid === currentQ.id) b.className += ' right';
-      else if(oid === pickedId) b.className += ' wrong';
+      if(c.correct) b.className += ' right';
+      else if(c.key === pickedKey) b.className += ' wrong';
     } else {
-      b.onclick = function(){ answer(oid); };
+      b.onclick = function(){ answer(c.key); };
     }
     choices.appendChild(b);
   });
@@ -319,17 +481,19 @@ function renderQuestion(pickedId){
   verdict.setAttribute('role','status');
   verdict.setAttribute('aria-live','polite');
   if(locked){
-    var wasRight = pickedId === currentQ.id;
+    var pick = q.choices.filter(function(c){ return c.key === pickedKey; })[0];
+    var wasRight = !!(pick && pick.correct);
+    var truth = q.choices.filter(function(c){ return c.correct; })[0];
     verdict.className += wasRight ? ' ok' : ' no';
-    verdict.textContent = wasRight ? 'Correct — ' + nameOf(s) : 'That was ' + nameOf(s);
+    if(wasRight) verdict.textContent = 'Correct';
+    else verdict.textContent = (q.type === 'what' ? 'They answered: ' : 'That was ') +
+      (truth ? truth.label : '');
   }
   box.appendChild(verdict);
 
   if(locked){
     var next = document.createElement('button');
-    next.type = 'button';
-    next.className = 'btn primary';
-    next.id = 'nextBtn';
+    next.type = 'button'; next.className = 'btn primary'; next.id = 'nextBtn';
     next.textContent = queue.length ? 'Next' : 'Finish round';
     next.onclick = nextQuestion;
     box.appendChild(next);
@@ -337,12 +501,13 @@ function renderQuestion(pickedId){
 
   var hint = document.createElement('div');
   hint.className = 'hint';
-  hint.textContent = locked ? 'Enter or Space for the next one' : 'Press 1–' + currentQ.choices.length + ' to answer';
+  hint.textContent = locked ? 'Enter or Space for the next one'
+                            : 'Press 1–' + q.choices.length + ' to answer';
   box.appendChild(hint);
 
   stage.innerHTML = '';
   stage.appendChild(box);
-  if(locked){ document.getElementById('nextBtn').focus(); }
+  if(locked){ var nb = document.getElementById('nextBtn'); if(nb) nb.focus(); }
 }
 
 function renderRoundEnd(){
@@ -352,26 +517,35 @@ function renderRoundEnd(){
 
   var h = document.createElement('h2');
   h.style.margin = '0';
-  h.textContent = correct + ' of ' + roundLen + ' — ' + pct + '%';
+  h.textContent = roundLen ? correct + ' of ' + roundLen + ' — ' + pct + '%' : 'Nothing to ask';
   box.appendChild(h);
 
   var sub = document.createElement('div');
   sub.className = 'qask';
-  sub.textContent = missed.length ? missed.length + ' to work on' : 'Clean round';
+  sub.textContent = missed.length ? missed.length + ' to work on' : (roundLen ? 'Clean round' : '');
   box.appendChild(sub);
 
   if(missed.length){
     var grid = document.createElement('div');
     grid.className = 'missed';
-    missed.forEach(function(id){
-      var s = byId(id);
+    var seen = {};
+    missed.forEach(function(it){
+      if(seen[it.sid]) return;
+      seen[it.sid] = 1;
+      var s = byId(it.sid);
       if(!s) return;
       var fig = document.createElement('figure');
-      var im = document.createElement('img');
-      im.src = s.photo; im.alt = '';
+      if(s.photo){
+        var im = document.createElement('img'); im.src = s.photo; im.alt = '';
+        fig.appendChild(im);
+      } else {
+        var ph = document.createElement('div');
+        ph.className = 'nophoto'; ph.textContent = (s.name || '?').slice(0,1);
+        fig.appendChild(ph);
+      }
       var cap = document.createElement('figcaption');
       cap.textContent = nameOf(s);
-      fig.appendChild(im); fig.appendChild(cap);
+      fig.appendChild(cap);
       grid.appendChild(fig);
     });
     box.appendChild(grid);
@@ -450,7 +624,7 @@ document.addEventListener('keydown', function(e){
   var i = parseInt(e.key, 10);
   if(i >= 1 && i <= currentQ.choices.length){
     e.preventDefault();
-    answer(currentQ.choices[i - 1]);
+    answer(currentQ.choices[i - 1].key);
   }
 });
 
@@ -460,9 +634,20 @@ document.getElementById('resetStats').onclick = function(){
   save();
   renderStats();
 };
-courseSel.onchange = function(){ renderStage(); renderStats(); };
+/* Land on a mode that actually has something in it, rather than showing an
+   empty Photos tab to someone who has only loaded a survey. */
+function pickInitialMode(){
+  var av = modeAvailability(courseSel.value);
+  if(av.photos >= 2) mode = 'photos';
+  else if(av.survey) mode = 'survey';
+  else mode = 'photos';
+}
+
+courseSel.onchange = function(){ pickInitialMode(); renderModes(); renderStage(); renderStats(); };
 
 fillCourses();
+pickInitialMode();
+renderModes();
 renderStage();
 renderStats();
 </script>

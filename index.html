@@ -150,6 +150,7 @@ input:focus,select:focus,textarea:focus{outline:2px solid var(--blue);outline-of
 .imp-thumb{width:40px;height:40px;object-fit:cover;border:1px solid var(--rule);border-radius:2px;display:block}
 .imp-nophoto{color:var(--ink3);font-family:"IBM Plex Mono",monospace;font-size:12px}
 .imp-sel{max-width:210px;font-size:12.5px;padding:5px 7px}
+.imp-table tr.leaky td{background:#FDFBF4}
 .imp-foot{display:flex;align-items:center;gap:4px;margin-top:14px;flex-wrap:wrap}
 
 /* checklist field */
@@ -336,6 +337,7 @@ var DEFAULTS = {
     mailto:'', saved:[], marks:{}, issns:{}, window:14 },
   plans:{ weeks:{}, semesters:[], years:{} },
   namegame:{},
+  survey:{columns:[]},
   hidden:[]
 };
 var DB = Object.assign({}, DEFAULTS, readRaw() || {});
@@ -593,6 +595,370 @@ function parseNames(text){
     if(out.indexOf(n) === -1) out.push(n);
   }
   return out;
+}
+
+/* ======================= survey import =======================
+   Loads a survey export (Google Forms and similar) and attaches each student's
+   answers to their record, so the Name game can quiz on them. Runs entirely in
+   the browser like the roster import. */
+
+var surveying = false;      /* false | true (form) | 'review' */
+var svText = '';            /* pasted/loaded CSV, kept across Back */
+var svTable = null;         /* {headers:[], rows:[[]]} */
+var svCols = [];            /* [{idx, text, kind, distinct, use, matched}] */
+var svMatches = [];         /* [{row, studentId, name, status}] */
+var svCourseId = '';
+
+/* Full CSV parse — quoted fields may contain commas AND newlines, which free
+   text answers routinely do. csvCells() only handles a single line. */
+function parseCsvTable(text){
+  var rows = [], row = [], cur = '', q = false;
+  var t = String(text).replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  for(var i = 0; i < t.length; i++){
+    var c = t[i];
+    if(q){
+      if(c === '"' && t[i+1] === '"'){ cur += '"'; i++; }
+      else if(c === '"'){ q = false; }
+      else cur += c;
+    }
+    else if(c === '"'){ q = true; }
+    else if(c === ','){ row.push(cur); cur = ''; }
+    else if(c === '\n'){ row.push(cur); rows.push(row); row = []; cur = ''; }
+    else cur += c;
+  }
+  if(cur.length || row.length){ row.push(cur); rows.push(row); }
+  rows = rows.filter(function(r){ return r.some(function(x){ return String(x).trim(); }); });
+  if(!rows.length) return null;
+  return { headers: rows[0].map(function(h){ return String(h).trim(); }), rows: rows.slice(1) };
+}
+
+/* Decide how a column can be quizzed:
+     who  - answers are near-unique, so "who said this?" is meaningful
+     what - answers repeat, so ask what a named student answered and offer the
+            distinct values as choices
+     none - unusable (everyone identical, too few answers, or long AND repetitive) */
+/* pairs: [{v: answer, name: that student's name}] — the name is needed to spot
+   questions whose answers give the answer away ("what name do you go by?"). */
+function classifyColumn(pairs){
+  var use = pairs.filter(function(p){ return p.v && String(p.v).trim(); })
+                 .map(function(p){ return {v:String(p.v).trim(), name:p.name || ''}; });
+  if(use.length < 3) return {kind:'none', reason:'fewer than 3 answers', distinct:[]};
+  var distinct = [];
+  use.forEach(function(p){ if(distinct.indexOf(p.v) === -1) distinct.push(p.v); });
+  if(distinct.length < 2) return {kind:'none', reason:'everyone answered the same', distinct:distinct};
+
+  var ratio = distinct.length / use.length;
+  var avgLen = use.reduce(function(a, p){ return a + p.v.length; }, 0) / use.length;
+
+  /* Would "who said this?" be trivial because the answer contains the name? */
+  var leaks = 0;
+  use.forEach(function(p){
+    var toks = String(p.name).trim().split(/\s+/).map(normName).filter(function(t){ return t.length > 2; });
+    var a = normName(p.v);
+    if(toks.some(function(t){ return a.indexOf(t) > -1; })) leaks++;
+  });
+  var leaky = use.length && (leaks / use.length) >= 0.4;
+
+  if(ratio >= 0.8 && distinct.length >= 4){
+    if(leaky) return {kind:'who', distinct:distinct, leaky:true,
+      reason:'answers usually contain the student’s own name'};
+    return {kind:'who', distinct:distinct, ratio:ratio};
+  }
+  /* Long values are fine as choices — they render one per row. */
+  if(avgLen <= 200) return {kind:'what', distinct:distinct, ratio:ratio};
+  return {kind:'none', reason:'long answers that still repeat', distinct:distinct};
+}
+
+/* Google Forms writes "Name (Last, First)" and "Email Address"; be liberal. */
+function findCol(headers, res){
+  for(var i = 0; i < headers.length; i++){
+    for(var r = 0; r < res.length; r++){ if(res[r].test(headers[i])) return i; }
+  }
+  return -1;
+}
+
+function renderSurveyImport(){
+  var main = document.getElementById('main');
+
+  var head = document.createElement('div');
+  head.className = 'panel-head';
+  head.innerHTML = '<h2>Import survey</h2><span class="count">nothing leaves this browser</span><span class="spacer"></span>';
+  var cancel = document.createElement('button');
+  cancel.className = 'btn'; cancel.textContent = 'Cancel';
+  cancel.onclick = function(){ surveying = false; svText = ''; svTable = null; svCols = []; svMatches = []; renderMain(); };
+  head.appendChild(cancel);
+  main.appendChild(head);
+
+  var card = document.createElement('div');
+  card.className = 'card imp';
+
+  var s1 = document.createElement('div');
+  s1.className = 'imp-step';
+  s1.innerHTML = '<h3><span class="stepn">1</span>Course</h3>';
+  var csel = document.createElement('select');
+  csel.id = 'svCourse';
+  if(!DB.courses.length){
+    csel.innerHTML = '<option value="">No courses yet — add one on the Courses tab</option>';
+  } else {
+    DB.courses.forEach(function(c){
+      var o = document.createElement('option');
+      o.value = c.id;
+      o.textContent = (c.code || c.title || 'Course') + (c.term ? ' · ' + c.term : '');
+      csel.appendChild(o);
+    });
+  }
+  s1.appendChild(csel);
+  card.appendChild(s1);
+
+  var s2 = document.createElement('div');
+  s2.className = 'imp-step';
+  s2.innerHTML = '<h3><span class="stepn">2</span>Responses</h3>' +
+    '<p class="imp-help">Choose the survey export as <code>.csv</code>, or paste it below. ' +
+    'In Google Sheets: <em>File → Download → Comma-separated values</em>. ' +
+    'Students are matched on an email column if there is one, otherwise on a name column — ' +
+    '<em>Last, First</em> is handled. The Timestamp column is ignored.</p>';
+  var csvIn = document.createElement('input');
+  csvIn.type = 'file'; csvIn.accept = '.csv,text/csv,text/plain';
+  var ta = document.createElement('textarea');
+  ta.id = 'svText'; ta.rows = 6;
+  ta.placeholder = 'Timestamp,Email Address,Name (Last, First),Why are you taking this course?\n…';
+  ta.value = svText;
+  ta.oninput = function(){ svText = ta.value; };
+  csvIn.onchange = function(){
+    var f = csvIn.files && csvIn.files[0];
+    if(!f) return;
+    var fr = new FileReader();
+    fr.onload = function(){ ta.value = fr.result; svText = ta.value; csvIn.value = ''; };
+    fr.readAsText(f);
+  };
+  s2.appendChild(csvIn);
+  s2.appendChild(ta);
+  card.appendChild(s2);
+
+  var act = document.createElement('div');
+  act.className = 'imp-step';
+  var go = document.createElement('button');
+  go.className = 'btn primary';
+  go.textContent = 'Read the survey';
+  var prog = document.createElement('span');
+  prog.className = 'imp-prog';
+  go.onclick = function(){
+    svCourseId = csel.value || '';
+    if(!svCourseId){ prog.textContent = 'Add a course on the Courses tab first.'; return; }
+    var tbl = parseCsvTable(document.getElementById('svText').value);
+    if(!tbl || !tbl.rows.length){ prog.textContent = 'No rows found — paste the survey export first.'; return; }
+    svTable = tbl;
+    buildSurveyPlan();
+    if(!svMatches.filter(function(m){ return m.studentId; }).length){
+      prog.textContent = 'None of these responses matched a student in this course. ' +
+        'Check the roster is loaded and that the survey has a name or email column.';
+      return;
+    }
+    surveying = 'review';
+    renderMain();
+  };
+  act.appendChild(go); act.appendChild(prog);
+  card.appendChild(act);
+
+  main.appendChild(card);
+}
+
+function buildSurveyPlan(){
+  var headers = svTable.headers, rows = svTable.rows;
+  var emailIdx = findCol(headers, [/^e-?mail/i, /email address/i]);
+  var nameIdx  = findCol(headers, [/^name/i, /student name/i, /full name/i]);
+
+  /* Match each response row to a student in the chosen course. */
+  var roster = DB.students.filter(function(s){ return s.course === svCourseId; });
+  svMatches = rows.map(function(r, ri){
+    var st = null, how = '';
+    if(emailIdx > -1 && String(r[emailIdx] || '').trim()){
+      var em = String(r[emailIdx]).trim().toLowerCase();
+      st = roster.filter(function(s){ return String(s.email || '').trim().toLowerCase() === em; })[0] || null;
+      if(st) how = 'email';
+    }
+    if(!st && nameIdx > -1){
+      var nm = cleanName(r[nameIdx]);
+      var k = nameKey(nm);
+      st = roster.filter(function(s){ return nameKey(s.name || '') === k; })[0] || null;
+      if(st) how = 'name';
+      if(!st){
+        /* Same near-miss tolerance the photo matcher uses. */
+        var best = null, bs = 0;
+        roster.forEach(function(s){
+          var sc = prefixScore(k, nameKey(s.name || ''));
+          if(sc > bs){ bs = sc; best = s; }
+        });
+        if(best && bs >= 0.8){ st = best; how = 'near match'; }
+      }
+    }
+    return {
+      row: ri,
+      label: (nameIdx > -1 ? cleanName(r[nameIdx]) : '') ||
+             (emailIdx > -1 ? String(r[emailIdx] || '') : 'Response ' + (ri + 1)),
+      studentId: st ? st.id : '',
+      studentName: st ? st.name : '',
+      how: how
+    };
+  });
+
+  /* Classify every column that carries an actual answer. Canvas's Student
+     Analysis Report interleaves a points column (headed with the points
+     possible, e.g. "0.0") after every question, and appends n correct /
+     n incorrect / score; Google Forms adds a Timestamp. None are questions. */
+  var SKIP = /^(timestamp|name|id|sis_?id|section|section_?id|section_?sis_?id|submitted|attempt|n\s*correct|n\s*incorrect|score|points|total)$/i;
+  svCols = [];
+  headers.forEach(function(h, ci){
+    if(ci === emailIdx || ci === nameIdx) return;
+    var head = String(h || '').trim();
+    if(!head) return;
+    if(SKIP.test(head)) return;
+    if(/^[\d.]+$/.test(head)) return;                     /* points column */
+    var matched = svMatches.filter(function(m){ return m.studentId; });
+    var pairs = matched.map(function(m){
+      return { v: rows[m.row][ci], name: m.studentName };
+    });
+    var cls = classifyColumn(pairs);
+    svCols.push({
+      idx: ci,
+      /* Canvas prefixes every question with its numeric id. */
+      text: head.replace(/^\d+:\s*/, ''),
+      kind: cls.kind,
+      reason: cls.reason || '',
+      leaky: !!cls.leaky,
+      distinct: cls.distinct || [],
+      /* A leaky column stays available but is off unless deliberately chosen. */
+      use: cls.kind !== 'none' && !cls.leaky
+    });
+  });
+}
+
+function renderSurveyReview(){
+  var main = document.getElementById('main');
+  var matched = svMatches.filter(function(m){ return m.studentId; });
+  var unmatched = svMatches.length - matched.length;
+  var usable = svCols.filter(function(c){ return c.kind !== 'none'; });
+  var chosen = svCols.filter(function(c){ return c.use; });
+
+  var head = document.createElement('div');
+  head.className = 'panel-head';
+  head.innerHTML = '<h2>Review survey</h2><span class="count">' +
+    matched.length + ' of ' + svMatches.length + ' responses matched · ' +
+    usable.length + ' of ' + svCols.length + ' questions usable</span><span class="spacer"></span>';
+  var back = document.createElement('button');
+  back.className = 'btn'; back.textContent = 'Back';
+  back.onclick = function(){ surveying = true; renderMain(); };
+  head.appendChild(back);
+  main.appendChild(head);
+
+  if(unmatched){
+    var w = document.createElement('div');
+    w.className = 'imp-warn';
+    w.textContent = unmatched + ' response' + (unmatched === 1 ? '' : 's') +
+      ' did not match anyone on this course’s roster and will be ignored. ' +
+      'That is normal if students used a personal email or left the name blank.';
+    main.appendChild(w);
+  }
+
+  /* --- questions --- */
+  var qh = document.createElement('div');
+  qh.className = 'panel-head';
+  qh.innerHTML = '<h2 style="font-size:15px">Questions to quiz on</h2>';
+  main.appendChild(qh);
+
+  var card = document.createElement('div');
+  card.className = 'card';
+  var tbl = document.createElement('table');
+  tbl.className = 'imp-table';
+  tbl.innerHTML = '<thead><tr><th>Use</th><th>Question</th><th>Asked as</th><th>Answers</th></tr></thead>';
+  var tb = document.createElement('tbody');
+  svCols.forEach(function(c){
+    var tr = document.createElement('tr');
+
+    var tdU = document.createElement('td');
+    var cb = document.createElement('input');
+    cb.type = 'checkbox'; cb.checked = c.use; cb.disabled = c.kind === 'none';
+    cb.setAttribute('aria-label', 'Use question: ' + c.text);
+    cb.onchange = function(){ c.use = cb.checked; renderMain(); };
+    tdU.appendChild(cb);
+    tr.appendChild(tdU);
+    if(c.leaky) tr.className = 'leaky';
+
+    var tdQ = document.createElement('td');
+    tdQ.textContent = c.text.length > 90 ? c.text.slice(0, 90) + '…' : c.text;
+    tr.appendChild(tdQ);
+
+    var tdK = document.createElement('td');
+    if(c.leaky){
+      tdK.innerHTML = '<span class="pill warn">gives the answer away</span>' +
+        '<div class="imp-nophoto" style="margin-top:3px">' + esc(c.reason) + '</div>';
+    } else if(c.kind === 'who'){
+      tdK.innerHTML = '<span class="pill ok">who said this</span>';
+    } else if(c.kind === 'what'){
+      tdK.innerHTML = '<span class="pill">what did they answer</span>';
+    } else {
+      tdK.innerHTML = '<span class="imp-nophoto">skipped — ' + esc(c.reason) + '</span>';
+    }
+    tr.appendChild(tdK);
+
+    var tdD = document.createElement('td');
+    tdD.className = 'num';
+    tdD.textContent = c.distinct.length ? c.distinct.length + ' distinct' : '—';
+    tr.appendChild(tdD);
+
+    tb.appendChild(tr);
+  });
+  tbl.appendChild(tb);
+  card.appendChild(tbl);
+  main.appendChild(card);
+
+  var foot = document.createElement('div');
+  foot.className = 'imp-foot';
+  var add = document.createElement('button');
+  add.className = 'btn primary';
+  add.textContent = 'Attach ' + chosen.length + ' question' + (chosen.length === 1 ? '' : 's') +
+    ' to ' + matched.length + ' student' + (matched.length === 1 ? '' : 's');
+  add.disabled = !chosen.length || !matched.length;
+  add.onclick = commitSurvey;
+  foot.appendChild(add);
+  main.appendChild(foot);
+}
+
+function commitSurvey(){
+  var rows = svTable.rows;
+  var snapshot = JSON.stringify(DB.survey || null);
+  DB.survey = DB.survey || {columns:[]};
+  /* Re-importing the same survey replaces its questions rather than piling up
+     duplicates: a column is identified by its text plus its course. */
+  svCols.filter(function(c){ return c.use; }).forEach(function(c){
+    var responses = {};
+    svMatches.forEach(function(m){
+      if(!m.studentId) return;
+      var v = String(rows[m.row][c.idx] == null ? '' : rows[m.row][c.idx]).trim();
+      if(v) responses[m.studentId] = v;
+    });
+    if(Object.keys(responses).length < 2) return;
+    var rec = {
+      id: uid(),
+      course: svCourseId,
+      text: c.text,
+      kind: c.kind,
+      responses: responses
+    };
+    var at = -1;
+    DB.survey.columns.forEach(function(x, i){
+      if(x.course === svCourseId && x.text === c.text) at = i;
+    });
+    if(at > -1) DB.survey.columns[at] = rec; else DB.survey.columns.push(rec);
+  });
+  if(!saveGuarded()){
+    DB.survey = snapshot === 'null' ? {columns:[]} : JSON.parse(snapshot);
+    save();
+    alert('Out of browser storage — the survey was not saved.');
+    return;
+  }
+  surveying = false; svText = ''; svTable = null; svCols = []; svMatches = [];
+  renderMain();
 }
 
 function renderImport(){
@@ -921,6 +1287,11 @@ function renderEntity(key){
     imp.textContent = 'Import roster';
     imp.onclick = function(){ importing = true; renderMain(); };
     head.appendChild(imp);
+    var svb = document.createElement('button');
+    svb.className = 'btn';
+    svb.textContent = 'Import survey';
+    svb.onclick = function(){ surveying = true; renderMain(); };
+    head.appendChild(svb);
   }
   var add = document.createElement('button');
   add.className = 'btn primary';
@@ -1870,6 +2241,8 @@ function renderMain(){
   main.innerHTML = '';
   if(current === 'students' && importing === 'review'){ renderReview(); return; }
   if(current === 'students' && importing){ renderImport(); return; }
+  if(current === 'students' && surveying === 'review'){ renderSurveyReview(); return; }
+  if(current === 'students' && surveying){ renderSurveyImport(); return; }
   if(ENTITIES[current]) renderEntity(current);
   else if(current === 'todo') renderTodo();
   else if(current === 'plans') renderPlans();
