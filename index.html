@@ -637,12 +637,28 @@ function parseCsvTable(text){
      what - answers repeat, so ask what a named student answered and offer the
             distinct values as choices
      none - unusable (everyone identical, too few answers, or long AND repetitive) */
+/* Answers that decline to say anything. Not a length rule — "Radio" and
+   "she/her" are short and worth quizzing on. Mirrored in names.html, which
+   applies the same test when choosing which question to ask about a student. */
+var DECLINE = ['na','n/a','n/a.','notapplicable','none','nothing','nil','null'];
+function normAns(v){ return String(v == null ? '' : v).toLowerCase().replace(/[^a-z0-9/]/g, ''); }
+function isDecline(v){
+  var s = String(v == null ? '' : v).trim();
+  if(!s) return true;
+  if(!/[a-z0-9]/i.test(s)) return true;
+  if(DECLINE.indexOf(normAns(s)) > -1) return true;
+  if(s.length <= 24 && DECLINE.indexOf(normAns(String(s).split(/[,;.!\n]/)[0])) > -1) return true;
+  return false;
+}
+
 /* pairs: [{v: answer, name: that student's name}] — the name is needed to spot
    questions whose answers give the answer away ("what name do you go by?"). */
 function classifyColumn(pairs){
-  var use = pairs.filter(function(p){ return p.v && String(p.v).trim(); })
+  /* Declines are not answers: counting them would make a mostly-empty column
+     look distinctive, and they are never asked about anyway. */
+  var use = pairs.filter(function(p){ return p.v && !isDecline(p.v); })
                  .map(function(p){ return {v:String(p.v).trim(), name:p.name || ''}; });
-  if(use.length < 3) return {kind:'none', reason:'fewer than 3 answers', distinct:[]};
+  if(use.length < 3) return {kind:'none', reason:'fewer than 3 real answers', distinct:[]};
   var distinct = [];
   use.forEach(function(p){ if(distinct.indexOf(p.v) === -1) distinct.push(p.v); });
   if(distinct.length < 2) return {kind:'none', reason:'everyone answered the same', distinct:distinct};

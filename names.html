@@ -181,8 +181,47 @@ function nameOf(s){ return (s && s.name) || 'Unnamed student'; }
 function surveyColsFor(cid){
   return ((DB.survey && DB.survey.columns) || []).filter(function(c){ return c.course === cid; });
 }
+
+/* Answers that decline to say anything. Two tiers on purpose: DECLINE applies
+   everywhere, SOFT only to free-text questions — on a menu question picking
+   "No" is a real answer, but typing "No" under "anything else?" is not.
+   Deliberately not a length rule: "Radio", "Robots" and "she/her" are short
+   and are exactly what the game should be asking about. */
+var DECLINE = ['na','n/a','n/a.','notapplicable','none','nothing','nil','null','nonwe'];
+var SOFT = ['no','nope','nothingreally','nothingelse','nothingtoadd','nothingatall',
+            'allgood','imgood','iamgood','nothanks','nothankyou','thankyou','thanks',
+            'thankssomuch','thanksverymuch','idk','notsure','notreally','nothingcomestomind'];
+
+function normAns(v){ return String(v == null ? '' : v).toLowerCase().replace(/[^a-z0-9/]/g, ''); }
+function firstChunk(v){ return String(v == null ? '' : v).split(/[,;.!\n]/)[0]; }
+
+function isDecline(v){
+  var s = String(v == null ? '' : v).trim();
+  if(!s) return true;
+  if(!/[a-z0-9]/i.test(s)) return true;                 /* punctuation only */
+  if(DECLINE.indexOf(normAns(s)) > -1) return true;
+  /* catches "none, thx" and "n/a - nothing to add" without touching real prose */
+  if(s.length <= 24 && DECLINE.indexOf(normAns(firstChunk(s))) > -1) return true;
+  return false;
+}
+function isNonAnswer(v){
+  if(isDecline(v)) return true;
+  var s = String(v == null ? '' : v).trim();
+  if(SOFT.indexOf(normAns(s)) > -1) return true;
+  if(s.length <= 24 && SOFT.indexOf(normAns(firstChunk(s))) > -1) return true;
+  return false;
+}
+function isSubstantive(v, kind){
+  return kind === 'who' ? !isNonAnswer(v) : !isDecline(v);
+}
+
+/* Only columns where this student actually said something — there is nothing
+   to remember about a student who answered "N/A". */
 function colsAnsweredBy(sid, cid){
-  return surveyColsFor(cid).filter(function(c){ return c.responses && c.responses[sid]; });
+  return surveyColsFor(cid).filter(function(c){
+    var v = c.responses && c.responses[sid];
+    return v && isSubstantive(v, c.kind);
+  });
 }
 
 function shuffle(a){
@@ -277,9 +316,11 @@ function buildQuestion(item, cid){
   var mine = col.responses[s.id];
 
   if(col.kind === 'who'){
-    /* Distractors must be students who also answered, otherwise the right
-       answer is the only plausible one. */
-    var answered = others.filter(function(x){ return col.responses[x.id]; });
+    /* Distractors must be students who also answered substantively, otherwise
+       the right answer is the only plausible one. */
+    var answered = others.filter(function(x){
+      return col.responses[x.id] && isSubstantive(col.responses[x.id], 'who');
+    });
     var pool = answered.length >= 3 ? answered : others;
     var ids = sample(pool.map(function(x){ return x.id; }), 3, []);
     return {
@@ -296,8 +337,10 @@ function buildQuestion(item, cid){
   var values = [];
   Object.keys(col.responses).forEach(function(k){
     var v = col.responses[k];
+    if(isDecline(v)) return;                 /* never offer "N/A" as a choice */
     if(values.indexOf(v) === -1) values.push(v);
   });
+  if(values.indexOf(mine) === -1) values.push(mine);
   if(values.length < 2) return null;
   var wrong = sample(values, 3, [mine]);
   return {
