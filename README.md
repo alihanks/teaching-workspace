@@ -62,11 +62,16 @@ If any of that matters more than convenience, download the two files and open
   A question whose answers usually contain the student's own name (*"what name
   do you go by?"*) is flagged as giving the answer away and left off by default.
   You review and tick every question before anything is attached.
+- **Lab groups** lets you enter who works with whom, since that usually exists
+  only on paper. Pick a course, click two or three faces in the *Not in a group*
+  pool, and press **Make a group**. Click a face inside a group to take that
+  student out again; groups can be renamed, added to, or disbanded. Students
+  without a photo show as an initial, so this works before photos are loaded.
 - **Name game** shows a student photo and four names from the same course, and
   tracks which faces you keep missing. Add photos on the Students tab: each one
   is center-cropped and shrunk to a 160px thumbnail before it is stored, so a
   full roster stays well inside the local-storage budget. Students without a
-  photo are simply skipped. If a survey is loaded, a mode switch offers **Photos**, **Survey** or **Mixed**, and a round asks one question per student whichever mode you pick.
+  photo are simply skipped. If a survey is loaded, a mode switch offers **Photos**, **Survey**, **Groups** or **Mixed**, and a round asks one question per student whichever mode you pick.
 - **Digest** is a live literature feed, not a record of your own papers. It
   queries public APIs from the browser each time you open it, over a 7/14/30/60
   day look-back:

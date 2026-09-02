@@ -153,6 +153,7 @@ DB.courses  = DB.courses  || [];
 DB.students = DB.students || [];
 DB.namegame = DB.namegame || {};
 DB.survey   = DB.survey   || {columns:[]};
+DB.groups   = DB.groups   || [];
 function save(){ writeRaw(DB); }
 function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g,function(c){
   return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
@@ -180,6 +181,15 @@ function nameOf(s){ return (s && s.name) || 'Unnamed student'; }
 
 function surveyColsFor(cid){
   return ((DB.survey && DB.survey.columns) || []).filter(function(c){ return c.course === cid; });
+}
+
+/* Lab groups, entered by hand on the Lab groups tab. */
+function groupOf(sid){
+  return (DB.groups || []).filter(function(g){ return g.members.indexOf(sid) > -1; })[0] || null;
+}
+function groupmatesOf(sid){
+  var g = groupOf(sid);
+  return g ? g.members.filter(function(m){ return m !== sid && byId(m); }) : [];
 }
 
 /* Answers that decline to say anything. Two tiers on purpose: DECLINE applies
@@ -280,12 +290,15 @@ function buildPool(cid){
   studentsFor(cid).forEach(function(s){
     var hasPhoto = !!s.photo;
     var hasSurvey = colsAnsweredBy(s.id, cid).length > 0;
+    var hasGroup = groupmatesOf(s.id).length > 0;
     if(mode === 'photos'){ if(hasPhoto) out.push({sid:s.id, want:'photo'}); }
     else if(mode === 'survey'){ if(hasSurvey) out.push({sid:s.id, want:'survey'}); }
+    else if(mode === 'groups'){ if(hasGroup) out.push({sid:s.id, want:'group'}); }
     else {
       var opts = [];
       if(hasPhoto) opts.push('photo');
       if(hasSurvey) opts.push('survey');
+      if(hasGroup) opts.push('group');
       if(opts.length) out.push({sid:s.id, want: opts[Math.floor(Math.random() * opts.length)]});
     }
   });
@@ -306,6 +319,27 @@ function buildQuestion(item, cid){
       ask: 'Who is this?',
       choices: shuffle(picks.concat([s.id])).map(function(id){
         return { key:id, label:nameOf(byId(id)), correct:id === s.id };
+      })
+    };
+  }
+
+  if(item.want === 'group'){
+    var mates = groupmatesOf(s.id);
+    if(!mates.length) return null;
+    /* Every groupmate must be excluded from the distractors, or a three-person
+       group can put two correct answers on screen. */
+    var mine = groupOf(s.id);
+    var outsiders = others.filter(function(x){ return mine.members.indexOf(x.id) === -1; });
+    if(!outsiders.length) return null;
+    var mate = mates[Math.floor(Math.random() * mates.length)];
+    var wrongIds = sample(outsiders.map(function(x){ return x.id; }), 3, []);
+    return {
+      type: 'group', sid: s.id,
+      photo: s.photo || '',
+      who: nameOf(s),
+      ask: mates.length > 1 ? 'Who else is in their group?' : 'Who is their lab partner?',
+      choices: shuffle(wrongIds.concat([mate])).map(function(id){
+        return { key:id, label:nameOf(byId(id)), correct:id === mate };
       })
     };
   }
@@ -396,6 +430,7 @@ function modeAvailability(cid){
     total: roster.length,
     photos: withPhotos(roster).length,
     survey: roster.filter(function(s){ return colsAnsweredBy(s.id, cid).length; }).length,
+    groups: roster.filter(function(s){ return groupmatesOf(s.id).length; }).length,
     questions: surveyColsFor(cid).length
   };
 }
@@ -407,7 +442,8 @@ function renderModes(){
   box.innerHTML = '';
   [['photos','Photos', av.photos],
    ['survey','Survey', av.survey],
-   ['mixed','Mixed', Math.max(av.photos, av.survey)]].forEach(function(m){
+   ['groups','Groups', av.groups],
+   ['mixed','Mixed', Math.max(av.photos, av.survey, av.groups)]].forEach(function(m){
     var b = document.createElement('button');
     b.type = 'button';
     b.className = 'chip';
@@ -443,7 +479,11 @@ function renderStage(){
     'Use <strong>Import survey</strong> on the Students tab to attach responses.');
   if(mode === 'survey' && !av.survey) return empty('A survey is loaded, but none of its responses ' +
     'matched a student on this course’s roster.');
-  if(mode === 'mixed' && !av.photos && !av.survey) return empty('Load photos or a survey first.');
+  if(mode === 'groups' && !av.groups) return empty('No lab groups have been set up for this course yet. ' +
+    'Use the <strong>Lab groups</strong> tab to build them — click two or three faces, then ' +
+    '<strong>Make a group</strong>.');
+  if(mode === 'mixed' && !av.photos && !av.survey && !av.groups)
+    return empty('Load photos, a survey, or lab groups first.');
 
   startRound();
 }
@@ -483,7 +523,7 @@ function renderQuestion(pickedKey){
     quote.className = 'qquote'; quote.textContent = q.quote;
     box.appendChild(quote);
   }
-  else { /* what */
+  else { /* what, or group — both name the student and ask about them */
     var whoWrap = document.createElement('div');
     whoWrap.className = 'qwho';
     if(q.photo){
@@ -495,12 +535,18 @@ function renderQuestion(pickedKey){
     nm.className = 'qname'; nm.textContent = q.who;
     whoWrap.appendChild(nm);
     box.appendChild(whoWrap);
-    var a3 = document.createElement('div');
-    a3.className = 'qask'; a3.textContent = 'How did they answer?';
-    box.appendChild(a3);
-    var qq3 = document.createElement('div');
-    qq3.className = 'qquestion'; qq3.textContent = q.ask;
-    box.appendChild(qq3);
+    if(q.type === 'what'){
+      var a3 = document.createElement('div');
+      a3.className = 'qask'; a3.textContent = 'How did they answer?';
+      box.appendChild(a3);
+      var qq3 = document.createElement('div');
+      qq3.className = 'qquestion'; qq3.textContent = q.ask;
+      box.appendChild(qq3);
+    } else {
+      var ag = document.createElement('div');
+      ag.className = 'qquestion'; ag.textContent = q.ask;
+      box.appendChild(ag);
+    }
   }
 
   var longChoices = q.choices.some(function(c){ return String(c.label).length > 34; });
@@ -529,8 +575,11 @@ function renderQuestion(pickedKey){
     var truth = q.choices.filter(function(c){ return c.correct; })[0];
     verdict.className += wasRight ? ' ok' : ' no';
     if(wasRight) verdict.textContent = 'Correct';
-    else verdict.textContent = (q.type === 'what' ? 'They answered: ' : 'That was ') +
-      (truth ? truth.label : '');
+    else {
+      var lead = q.type === 'what' ? 'They answered: '
+               : q.type === 'group' ? 'They work with ' : 'That was ';
+      verdict.textContent = lead + (truth ? truth.label : '');
+    }
   }
   box.appendChild(verdict);
 
@@ -683,6 +732,7 @@ function pickInitialMode(){
   var av = modeAvailability(courseSel.value);
   if(av.photos >= 2) mode = 'photos';
   else if(av.survey) mode = 'survey';
+  else if(av.groups) mode = 'groups';
   else mode = 'photos';
 }
 

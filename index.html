@@ -153,6 +153,30 @@ input:focus,select:focus,textarea:focus{outline:2px solid var(--blue);outline-of
 .imp-table tr.leaky td{background:#FDFBF4}
 .imp-foot{display:flex;align-items:center;gap:4px;margin-top:14px;flex-wrap:wrap}
 
+
+/* lab groups */
+.gpool{display:flex;flex-wrap:wrap;gap:10px;padding:14px}
+.gtile{display:flex;flex-direction:column;align-items:center;gap:5px;width:84px;
+  padding:7px 5px;border:1px solid var(--rule);border-radius:var(--radius);
+  background:#FCFDFC;cursor:pointer;font:inherit;color:var(--ink)}
+.gtile:hover{border-color:var(--ink3)}
+.gtile:focus-visible{outline:2px solid var(--blue);outline-offset:1px}
+.gtile.on{border-color:var(--green);background:#E8F0EC;box-shadow:inset 0 0 0 1px var(--green)}
+.gtile img{width:60px;height:60px;object-fit:cover;border-radius:2px;display:block}
+.gtile-none{width:60px;height:60px;border-radius:2px;background:var(--surface);
+  display:flex;align-items:center;justify-content:center;
+  font-family:"IBM Plex Sans Condensed",sans-serif;font-weight:700;font-size:24px;color:var(--ink3)}
+.gtile-name{font-size:11px;line-height:1.25;text-align:center;word-break:break-word}
+.gtile.small{width:64px;padding:5px 4px}
+.gtile.small img,.gtile.small .gtile-none{width:44px;height:44px;font-size:18px}
+.gtile.small .gtile-name{font-size:10px}
+.grow{display:flex;align-items:center;gap:12px;padding:12px 14px;border-bottom:1px solid var(--rule2);flex-wrap:wrap}
+.grow:last-child{border-bottom:0}
+.gname{width:140px;flex:none;padding:6px 9px;border:1px solid var(--rule);border-radius:var(--radius);
+  background:#FCFDFC;font:inherit;font-size:13.5px;font-weight:600}
+.gmem{display:flex;gap:8px;flex-wrap:wrap;flex:1;min-width:0}
+.gacts{display:flex;gap:6px;margin-left:auto}
+
 /* checklist field */
 .checks{border:1px solid var(--rule);border-radius:var(--radius);background:#FCFDFC}
 .check{display:flex;gap:9px;align-items:center;padding:7px 10px;border-bottom:1px solid var(--rule2)}
@@ -338,6 +362,7 @@ var DEFAULTS = {
   plans:{ weeks:{}, semesters:[], years:{} },
   namegame:{},
   survey:{columns:[]},
+  groups:[],
   hidden:[]
 };
 var DB = Object.assign({}, DEFAULTS, readRaw() || {});
@@ -471,6 +496,7 @@ var TABS = [
   {id:'digest', label:'Digest'},
   {id:'todo', label:'To-do'},
   {id:'plans', label:'Plans'},
+  {id:'groups', label:'Lab groups'},
   {id:'names', label:'Name game'}
 ];
 var current = TABS[0].id;
@@ -1567,6 +1593,217 @@ function listField(rec, f){
 
 /* ============================ to-do ============================ */
 var todoFilter = 'All';
+/* ======================= lab groups =======================
+   Groups are entered by hand — there is no digital source for them — so the
+   whole point of this tab is speed: click faces, make a group, repeat. */
+
+var groupCourse = '';
+var groupPick = {};   /* studentId -> true while selecting */
+
+function groupsFor(cid){
+  return (DB.groups || []).filter(function(g){ return g.course === cid; });
+}
+function groupOf(sid){
+  return (DB.groups || []).filter(function(g){ return g.members.indexOf(sid) > -1; })[0] || null;
+}
+function groupmatesOf(sid){
+  var g = groupOf(sid);
+  if(!g) return [];
+  return g.members.filter(function(m){ return m !== sid; });
+}
+
+/* A student tile: photo if there is one, initial if not. */
+function studentTile(s, opts){
+  opts = opts || {};
+  var b = document.createElement('button');
+  b.type = 'button';
+  b.className = 'gtile' + (opts.selected ? ' on' : '') + (opts.small ? ' small' : '');
+  var inner = '';
+  if(s.photo){
+    inner += '<img src="' + esc(s.photo) + '" alt="">';
+  } else {
+    inner += '<span class="gtile-none">' + esc((s.name || '?').trim().slice(0,1).toUpperCase()) + '</span>';
+  }
+  inner += '<span class="gtile-name">' + esc(s.name || 'Unnamed') + '</span>';
+  b.innerHTML = inner;
+  if(opts.title) b.title = opts.title;
+  b.setAttribute('aria-pressed', opts.selected ? 'true' : 'false');
+  return b;
+}
+
+function renderGroups(){
+  var main = document.getElementById('main');
+  if(!DB.groups) DB.groups = [];
+
+  /* Default the course selector to the first course. */
+  if(!groupCourse || !DB.courses.some(function(c){ return c.id === groupCourse; })){
+    groupCourse = DB.courses.length ? DB.courses[0].id : '';
+  }
+
+  var head = document.createElement('div');
+  head.className = 'panel-head';
+  head.innerHTML = '<h2>Lab groups</h2>';
+  var csel = document.createElement('select');
+  csel.id = 'gCourse';
+  csel.style.marginLeft = '6px';
+  DB.courses.forEach(function(c){
+    var o = document.createElement('option');
+    o.value = c.id;
+    o.textContent = (c.code || c.title || 'Course') + (c.term ? ' · ' + c.term : '');
+    csel.appendChild(o);
+  });
+  if(!DB.courses.length) csel.innerHTML = '<option value="">No courses yet</option>';
+  csel.value = groupCourse;
+  csel.onchange = function(){ groupCourse = csel.value; groupPick = {}; renderMain(); };
+  head.appendChild(csel);
+  var spacer = document.createElement('span');
+  spacer.className = 'spacer';
+  head.appendChild(spacer);
+  main.appendChild(head);
+
+  if(!groupCourse){
+    var e0 = document.createElement('div');
+    e0.className = 'card empty';
+    e0.textContent = 'Add a course on the Courses tab first, then assign students to it.';
+    main.appendChild(e0);
+    return;
+  }
+
+  var roster = DB.students.filter(function(s){ return s.course === groupCourse; });
+  if(!roster.length){
+    var e1 = document.createElement('div');
+    e1.className = 'card empty';
+    e1.textContent = 'No students are assigned to this course yet. Use Import roster on the Students tab.';
+    main.appendChild(e1);
+    return;
+  }
+
+  var groups = groupsFor(groupCourse);
+  var assigned = {};
+  groups.forEach(function(g){ g.members.forEach(function(m){ assigned[m] = 1; }); });
+  var free = roster.filter(function(s){ return !assigned[s.id]; });
+  var picked = Object.keys(groupPick).filter(function(id){ return groupPick[id] && !assigned[id]; });
+
+  /* --- unassigned pool --- */
+  var uh = document.createElement('div');
+  uh.className = 'panel-head';
+  uh.innerHTML = '<h2 style="font-size:15px">Not in a group</h2>' +
+    '<span class="count">' + free.length + ' of ' + roster.length + '</span><span class="spacer"></span>';
+  var mk = document.createElement('button');
+  mk.className = 'btn primary';
+  mk.textContent = picked.length ? 'Make a group of ' + picked.length : 'Select students below';
+  mk.disabled = picked.length < 2;
+  mk.onclick = function(){
+    DB.groups.push({
+      id: uid(),
+      course: groupCourse,
+      name: 'Group ' + (groupsFor(groupCourse).length + 1),
+      members: picked.slice()
+    });
+    groupPick = {};
+    save(); renderMain();
+  };
+  uh.appendChild(mk);
+  if(picked.length){
+    var clr = document.createElement('button');
+    clr.className = 'btn';
+    clr.textContent = 'Clear selection';
+    clr.onclick = function(){ groupPick = {}; renderMain(); };
+    uh.appendChild(clr);
+  }
+  main.appendChild(uh);
+
+  var pool = document.createElement('div');
+  pool.className = 'card gpool';
+  if(!free.length){
+    pool.innerHTML = '<div class="empty">Everyone is in a group.</div>';
+  } else {
+    free.forEach(function(s){
+      var t = studentTile(s, {selected: !!groupPick[s.id], title: 'Select ' + (s.name || 'student')});
+      t.onclick = function(){
+        if(groupPick[s.id]) delete groupPick[s.id]; else groupPick[s.id] = true;
+        renderMain();
+      };
+      pool.appendChild(t);
+    });
+  }
+  main.appendChild(pool);
+
+  /* --- existing groups --- */
+  var gh = document.createElement('div');
+  gh.className = 'panel-head';
+  gh.innerHTML = '<h2 style="font-size:15px">Groups</h2><span class="count">' +
+    groups.length + ' · ' + Object.keys(assigned).length + ' students placed</span>';
+  main.appendChild(gh);
+
+  var gcard = document.createElement('div');
+  gcard.className = 'card';
+  if(!groups.length){
+    gcard.innerHTML = '<div class="empty">No groups yet. Pick two or three faces above and press ' +
+      '<strong>Make a group</strong>.</div>';
+  }
+  groups.forEach(function(g){
+    var row = document.createElement('div');
+    row.className = 'grow';
+
+    var nameIn = document.createElement('input');
+    nameIn.type = 'text'; nameIn.className = 'gname';
+    nameIn.value = g.name || '';
+    nameIn.setAttribute('aria-label', 'Group name');
+    nameIn.oninput = function(){ g.name = nameIn.value; save(); };
+    row.appendChild(nameIn);
+
+    var mem = document.createElement('div');
+    mem.className = 'gmem';
+    g.members.forEach(function(mid){
+      var s = DB.students.filter(function(x){ return x.id === mid; })[0];
+      if(!s){ return; }
+      var t = studentTile(s, {small:true, title:'Remove ' + (s.name || 'student') + ' from this group'});
+      t.onclick = function(){
+        g.members = g.members.filter(function(x){ return x !== mid; });
+        if(!g.members.length) DB.groups = DB.groups.filter(function(x){ return x.id !== g.id; });
+        save(); renderMain();
+      };
+      mem.appendChild(t);
+    });
+    row.appendChild(mem);
+
+    var acts = document.createElement('div');
+    acts.className = 'gacts';
+    if(picked.length){
+      var add = document.createElement('button');
+      add.className = 'btn';
+      add.textContent = 'Add ' + picked.length;
+      add.title = 'Move the selected students into this group';
+      add.onclick = function(){
+        picked.forEach(function(id){ if(g.members.indexOf(id) === -1) g.members.push(id); });
+        groupPick = {}; save(); renderMain();
+      };
+      acts.appendChild(add);
+    }
+    var del = document.createElement('button');
+    del.className = 'btn';
+    del.textContent = 'Disband';
+    del.title = 'Delete this group and return its students to the pool';
+    del.onclick = function(){
+      DB.groups = DB.groups.filter(function(x){ return x.id !== g.id; });
+      save(); renderMain();
+    };
+    acts.appendChild(del);
+    row.appendChild(acts);
+
+    gcard.appendChild(row);
+  });
+  main.appendChild(gcard);
+
+  var note = document.createElement('div');
+  note.className = 'note';
+  note.style.marginTop = '10px';
+  note.textContent = 'Click a face in a group to take that student out again. ' +
+    'Groups feed the Name game’s Groups mode.';
+  main.appendChild(note);
+}
+
 function renderTodo(){
   var main = document.getElementById('main');
   var open = DB.todos.filter(function(t){ return !t.done; }).length;
@@ -2260,6 +2497,7 @@ function renderMain(){
   if(current === 'students' && surveying === 'review'){ renderSurveyReview(); return; }
   if(current === 'students' && surveying){ renderSurveyImport(); return; }
   if(ENTITIES[current]) renderEntity(current);
+  else if(current === 'groups') renderGroups();
   else if(current === 'todo') renderTodo();
   else if(current === 'plans') renderPlans();
   else if(current === 'digest') renderDigest();
